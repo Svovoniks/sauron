@@ -1623,7 +1623,7 @@
         display: flex;
         flex-direction: column;
         padding: 10px;
-        gap: 24px;
+        gap: 10px;
         background: linear-gradient(
             135deg,
             #0f0f23 0%,
@@ -1633,7 +1633,7 @@
     }
 
     .connection-tabs {
-        padding-top: 5px;
+        padding: 8px;
         display: flex;
         gap: 12px;
         align-items: center;
@@ -1651,7 +1651,7 @@
 
     .main-content {
         display: flex;
-        gap: 24px;
+        gap: 10px;
         flex: 1;
         min-height: 0;
     }
