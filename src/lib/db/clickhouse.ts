@@ -13,27 +13,31 @@ export function setRecordsClick(sql: string, connection: any, setResults: (resul
 
     host = host + ':' + connection.port
 
-    const client = createClient({
-        url: host,
-        username: connection.username,
-        password: connection.password,
-        database: connection.database,
-        request_timeout: 30000,
-    })
+    try {
+        const client = createClient({
+            url: host,
+            username: connection.username,
+            password: connection.password,
+            database: connection.database,
+            request_timeout: 30000,
+        })
 
-    console.log('client:', client);
+        console.log('client:', client);
 
 
-    client.query({
-        query: sql,
-        format: 'JSONEachRow',
-        abort_signal: signal
-    }).then(async (resultSet) => {
-        const result = await resultSet.json<Data>()
-        console.log('Query result:', result);
-        setResults(result);
-    }).catch((error) => {
-        console.error('ClickHouse query error:', error);
-        onError(error);
-    });
+        client.query({
+            query: sql,
+            format: 'JSONEachRow',
+            abort_signal: signal
+        }).then(async (resultSet) => {
+            const result = await resultSet.json<Data>()
+            console.log('Query result:', result);
+            setResults(result);
+        }).catch((error) => {
+            console.error('ClickHouse query error:', error);
+            onError(error);
+        });
+    } catch (err) {
+        onError(err)
+    }
 }

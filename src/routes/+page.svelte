@@ -85,12 +85,14 @@
     }
 
     interface SavedQuery {
+        id: string;
         name: string;
         query: string;
         active?: boolean;
     }
 
     interface SavedResult {
+        id: string;
         name: string;
         records: any[];
         query: string;
@@ -174,10 +176,17 @@
             if (Array.isArray(parsedQueries)) {
                 // Old format, migrate to new format
                 if (connections.length > 0) {
-                    allSavedQueries[connections[0].id] = parsedQueries;
+                    allSavedQueries[connections[0].id] = parsedQueries.map(
+                        (q: any) => ({ ...q, id: q.id || crypto.randomUUID() }),
+                    );
                     saveQueries();
                 }
             } else {
+                for (const connId in parsedQueries) {
+                    parsedQueries[connId] = parsedQueries[connId].map(
+                        (q: any) => ({ ...q, id: q.id || crypto.randomUUID() }),
+                    );
+                }
                 allSavedQueries = parsedQueries;
             }
             updateSavedQueries();
@@ -185,7 +194,14 @@
 
         const storedResults = localStorage.getItem("savedResults");
         if (storedResults) {
-            allSavedResults = JSON.parse(storedResults);
+            const parsedResults = JSON.parse(storedResults);
+            for (const connId in parsedResults) {
+                parsedResults[connId] = parsedResults[connId].map((r: any) => ({
+                    ...r,
+                    id: r.id || crypto.randomUUID(),
+                }));
+            }
+            allSavedResults = parsedResults;
             updateSavedResults();
         }
     });
@@ -299,6 +315,7 @@
             const activeConnection = connections.find((c) => c.active);
             if (activeConnection) {
                 const newQuery: SavedQuery = {
+                    id: crypto.randomUUID(),
                     name: queryNameInModal,
                     query: queryText,
                 };
@@ -319,7 +336,7 @@
         if (activeConnection) {
             allSavedQueries[activeConnection.id] = allSavedQueries[
                 activeConnection.id
-            ].filter((q) => q !== queryToDelete);
+            ].filter((q) => q.id !== queryToDelete.id);
             saveQueries();
             updateSavedQueries();
         }
@@ -337,6 +354,7 @@
             const activeConnection = connections.find((c) => c.active);
             if (activeConnection) {
                 const newResult: SavedResult = {
+                    id: crypto.randomUUID(),
                     name: resultNameInModal,
                     records: records,
                     query: queryText,
@@ -358,7 +376,7 @@
         if (activeConnection) {
             allSavedResults[activeConnection.id] = allSavedResults[
                 activeConnection.id
-            ].filter((r) => r !== resultToDelete);
+            ].filter((r) => r.id !== resultToDelete.id);
             saveResults();
             updateSavedResults();
         }
@@ -466,7 +484,21 @@
                                 id: c.id || crypto.randomUUID(),
                             }),
                         );
+
+                        for (const connId in importedData.queries) {
+                            importedData.queries[connId] = importedData.queries[connId].map(
+                                (q: any) => ({ ...q, id: q.id || crypto.randomUUID() }),
+                            );
+                        }
                         allSavedQueries = importedData.queries;
+
+                        if (importedData.results) {
+                            for (const connId in importedData.results) {
+                                importedData.results[connId] = importedData.results[connId].map(
+                                    (r: any) => ({ ...r, id: r.id || crypto.randomUUID() }),
+                                );
+                            }
+                        }
                         allSavedResults = importedData.results || {};
                     } else {
                         // Old format
@@ -495,7 +527,7 @@
     }
 
     function selectQuery(query: SavedQuery) {
-        savedQueries = savedQueries.map((q) => ({ ...q, active: q === query }));
+        savedQueries = savedQueries.map((q) => ({ ...q, active: q.id === query.id }));
         queryText = query.query;
         editor.setValue(queryText);
         queryVersion++;
@@ -504,7 +536,7 @@
     function selectResult(result: SavedResult) {
         savedResults = savedResults.map((r) => ({
             ...r,
-            active: r === result,
+            active: r.id === result.id,
         }));
         records = result.records;
         queryText = result.query;
