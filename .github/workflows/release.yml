@@ -18,6 +18,9 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v1
+
       - name: Install dependencies
         run: bun install
 
