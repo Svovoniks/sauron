@@ -15,8 +15,8 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install gobject-2.0
-        run: sudo apt-get update && sudo apt-get install -y libgobject2.0-dev
+      - name: Install Rust stuff
+        run: sudo apt install libwebkit2gtk-4.1-dev libsoup3.0-dev
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
