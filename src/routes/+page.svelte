@@ -778,7 +778,7 @@
                         autocorrect="off"
                         on:keydown={(e) => {
                             if (e.key === "Enter") {
-                                saveQueryConfirmed();
+                                saveResultConfirmed();
                             }
                         }}
                     />
