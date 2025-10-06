@@ -1,4 +1,6 @@
-![document symbol](https://github.com/Svovoniks/sauron/blob/master/demo/eye.png?raw=true)
+<p align="center">
+  <img src="https://github.com/Svovoniks/sauron/blob/master/demo/eye.png?raw=true" width="100" />
+</p>
 
 ## What is this app?
 
