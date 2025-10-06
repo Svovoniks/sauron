@@ -1,3 +1,5 @@
+![document symbol](https://github.com/Svovoniks/sauron/blob/master/demo/eye.png?raw=true)
+
 ## What is this app?
 
 Sauron is an app for searching the database (currently only Postgres and ClickHouse are supported) so mostly just running selects and showing results in a pretty format
