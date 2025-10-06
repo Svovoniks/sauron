@@ -12,4 +12,4 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
 
 ## Quick Demo:
 
-![Quick Demo](https://raw.githubusercontent.com/Svovoniks/sauron/master/demo/thumbnail.png)](https://raw.githubusercontent.com/Svovoniks/sauron/master/demo/demo.m4v)
+![document symbol](https://raw.githubusercontent.com/Svovoniks/sauron/master/demo/demo.gif)
