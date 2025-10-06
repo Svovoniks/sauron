@@ -541,6 +541,7 @@
         records = result.records;
         queryText = result.query;
         editor.setValue(queryText);
+        queryError = null;
         queryVersion++;
     }
 
