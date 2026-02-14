@@ -1,59 +1,18 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type * as Monaco from "monaco-editor/esm/vs/editor/editor.api";
-import { LanguageIdEnum, vsPlusTheme } from "monaco-sql-languages";
-import "monaco-sql-languages/esm/languages/flink/flink.contribution";
-import "monaco-sql-languages/esm/languages/hive/hive.contribution";
-import "monaco-sql-languages/esm/languages/impala/impala.contribution";
-import "monaco-sql-languages/esm/languages/mysql/mysql.contribution";
-import "monaco-sql-languages/esm/languages/pgsql/pgsql.contribution";
-import "monaco-sql-languages/esm/languages/spark/spark.contribution";
-import "monaco-sql-languages/esm/languages/trino/trino.contribution";
+import { ConnectionModal } from "./components/ConnectionModal";
+import { ConnectionTabs } from "./components/ConnectionTabs";
+import { DataView } from "./components/DataView";
+import { QuerySection } from "./components/QuerySection";
+import { SaveNameModal } from "./components/SaveNameModal";
+import { Sidebar } from "./components/Sidebar";
+import { useSqlEditor } from "./hooks/useSqlEditor";
 import { setRecords } from "./lib/db/common";
-
-interface Connection {
-  id: string;
-  name: string;
-  host: string;
-  port: string;
-  username: string;
-  password?: string;
-  database: string;
-  db_type: "postgres" | "clickhouse";
-  active?: boolean;
-}
-
-interface SavedQuery {
-  id: string;
-  name: string;
-  query: string;
-  active?: boolean;
-}
-
-interface SavedResult {
-  id: string;
-  name: string;
-  records: any[];
-  query: string;
-  active?: boolean;
-}
-
-const emptyConnection: Connection = {
-  id: "",
-  name: "",
-  host: "",
-  port: "",
-  username: "",
-  password: "",
-  database: "",
-  db_type: "clickhouse",
-};
+import { emptyConnection, type Connection, type SavedQuery, type SavedResult } from "./types/app";
+import { getValueType, prettyPrintJson } from "./utils/record";
 
 export default function App() {
-  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const monacoRef = useRef<typeof Monaco | null>(null);
-  const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const recordsTableRef = useRef<HTMLDivElement | null>(null);
   const queryNameInputRef = useRef<HTMLInputElement | null>(null);
   const resultNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -79,6 +38,8 @@ export default function App() {
   const [showSaveResultModal, setShowSaveResultModal] = useState(false);
   const [resultNameInModal, setResultNameInModal] = useState("");
   const [activeSidebarTab, setActiveSidebarTab] = useState<"queries" | "results">("queries");
+
+  const { editorRef, editorContainerRef } = useSqlEditor(queryText, setQueryText);
 
   const activeConnection = useMemo(() => connections.find((connection) => connection.active) ?? null, [connections]);
   const savedQueries = activeConnection ? allSavedQueries[activeConnection.id] || [] : [];
@@ -142,54 +103,6 @@ export default function App() {
     persistConnections(nextConnections);
     persistQueries(nextQueries);
     persistResults(nextResults);
-  }, []);
-
-  useEffect(() => {
-    let resizeObserver: ResizeObserver | null = null;
-    let disposed = false;
-
-    const initEditor = async () => {
-      const container = editorContainerRef.current;
-      if (!container) return;
-
-      const monaco = (await import("./lib/monaco")).default;
-      if (disposed) return;
-      monacoRef.current = monaco;
-
-      monaco.editor.defineTheme("sql-dark", vsPlusTheme.darkThemeData);
-      const editor = monaco.editor.create(container, {
-        lineNumbers: "off",
-        minimap: { enabled: false },
-        automaticLayout: false,
-        theme: "sql-dark",
-        scrollbar: { vertical: "hidden", verticalSliderSize: 0, verticalScrollbarSize: 0 },
-        language: LanguageIdEnum.FLINK,
-        lineDecorationsWidth: "0px",
-        find: undefined,
-        wordWrap: "on",
-        lineNumbersMinChars: 0,
-        padding: { top: 5, bottom: 5 },
-        renderLineHighlight: "none",
-        value: queryText,
-        fontSize: 15,
-      });
-
-      editor.onDidChangeModelContent(() => setQueryText(editor.getValue()));
-      resizeObserver = new ResizeObserver(() => editor.layout());
-      resizeObserver.observe(container);
-      editorRef.current = editor;
-    };
-
-    initEditor();
-
-    return () => {
-      disposed = true;
-      resizeObserver?.disconnect();
-      monacoRef.current?.editor.getModels().forEach((model) => model.dispose());
-      editorRef.current?.dispose();
-      editorRef.current = null;
-      monacoRef.current = null;
-    };
   }, []);
 
   useEffect(() => {
@@ -551,313 +464,88 @@ export default function App() {
     setSelectedRecord((currentRecord: any) => (currentRecord === record ? null : record));
   };
 
-  const prettyPrintJson = (value: any) => {
-    if (value === null || value === undefined) return "null";
-
-    const stringValue = String(value);
-    try {
-      const parsed = JSON.parse(stringValue);
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      return stringValue;
-    }
-  };
-
-  const getValueType = (value: any) => {
-    if (value === null || value === undefined) return "null";
-    if (typeof value === "boolean") return "boolean";
-    if (typeof value === "number") return "number";
-    if (typeof value === "string") {
-      try {
-        JSON.parse(value);
-        return "json";
-      } catch {
-        return "string";
-      }
-    }
-    return "object";
-  };
-
   return (
     <div className="app-container">
-      {showConnectionModal && (
-        <div className="modal-backdrop">
-          <div className="modal">
-            <h3>{editingConnection ? "Edit Connection" : "New Connection"}</h3>
-            <div className="form-group">
-              <label>Database Type</label>
-              <div className={`db-type-switch ${connectionInModal.db_type === "clickhouse" ? "clickhouse" : ""}`}>
-                <button
-                  className={connectionInModal.db_type === "postgres" ? "active" : ""}
-                  onClick={() => setConnectionInModal((connection) => ({ ...connection, db_type: "postgres" }))}
-                  type="button"
-                >
-                  Postgres
-                </button>
-                <button
-                  className={connectionInModal.db_type === "clickhouse" ? "active" : ""}
-                  onClick={() => setConnectionInModal((connection) => ({ ...connection, db_type: "clickhouse" }))}
-                  type="button"
-                >
-                  ClickHouse
-                </button>
-              </div>
-            </div>
-            <div className="form-group">
-              <label htmlFor="connection-name">Connection Name</label>
-              <input
-                id="connection-name"
-                type="text"
-                placeholder="stage"
-                autoCorrect="off"
-                value={connectionInModal.name}
-                onChange={(event) => setConnectionInModal((connection) => ({ ...connection, name: event.target.value }))}
-              />
-            </div>
-            <div className="host-port-group">
-              <div className="form-group">
-                <label htmlFor="host">Host</label>
-                <input
-                  id="host"
-                  type="text"
-                  placeholder="localhost"
-                  autoCorrect="off"
-                  value={connectionInModal.host}
-                  onChange={(event) => setConnectionInModal((connection) => ({ ...connection, host: event.target.value }))}
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="port">Port</label>
-                <input
-                  id="port"
-                  type="text"
-                  placeholder="5432"
-                  autoCorrect="off"
-                  value={connectionInModal.port}
-                  onChange={(event) => setConnectionInModal((connection) => ({ ...connection, port: event.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="form-group">
-              <label htmlFor="database">Database</label>
-              <input
-                id="database"
-                type="text"
-                placeholder="postgres"
-                autoCorrect="off"
-                value={connectionInModal.database}
-                onChange={(event) => setConnectionInModal((connection) => ({ ...connection, database: event.target.value }))}
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="username">Username</label>
-              <input
-                id="username"
-                type="text"
-                placeholder="user"
-                autoCorrect="off"
-                value={connectionInModal.username}
-                onChange={(event) => setConnectionInModal((connection) => ({ ...connection, username: event.target.value }))}
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="password">Password</label>
-              <div className="password-input-container">
-                <input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  autoCorrect="off"
-                  autoCapitalize="none"
-                  value={connectionInModal.password || ""}
-                  onChange={(event) => setConnectionInModal((connection) => ({ ...connection, password: event.target.value }))}
-                />
-                <button className="password-toggle" onClick={() => setShowPassword((value) => !value)} type="button">
-                  {showPassword ? "Hide" : "Show"}
-                </button>
-              </div>
-            </div>
-            <div className="modal-buttons">
-              <button className="button cancel-button" onClick={() => setShowConnectionModal(false)} type="button">Cancel</button>
-              <button className="button save-button" onClick={saveConnection} type="button">Save</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConnectionModal
+        show={showConnectionModal}
+        editingConnection={editingConnection}
+        connectionInModal={connectionInModal}
+        showPassword={showPassword}
+        onClose={() => setShowConnectionModal(false)}
+        onSave={saveConnection}
+        onTogglePassword={() => setShowPassword((value) => !value)}
+        onDbTypeChange={(dbType) => setConnectionInModal((connection) => ({ ...connection, db_type: dbType }))}
+        onFieldChange={(field, value) => setConnectionInModal((connection) => ({ ...connection, [field]: value }))}
+      />
 
-      <div className="connection-tabs">
-        {connections.map((connection) => (
-          <div className="tab-container" key={connection.id}>
-            <div className="tab-actions">
-              <button className="edit-tab" onClick={() => editConnection(connection)} type="button">Edit</button>
-              <button className="delete-tab" onClick={() => deleteConnection(connection)} type="button">X</button>
-            </div>
-            <button className={`tab ${connection.active ? "active" : ""}`} onClick={() => selectTab(connection)} type="button">{connection.name}</button>
-          </div>
-        ))}
-        <button className="add-tab" onClick={addConnection} type="button">+</button>
-        <div className="import-export-buttons">
-          <button className="import-button" onClick={importConnections} type="button">Import</button>
-          <button className="export-button" onClick={exportConnections} type="button">Export</button>
-        </div>
-      </div>
+      <ConnectionTabs
+        connections={connections}
+        onAddConnection={addConnection}
+        onEditConnection={editConnection}
+        onDeleteConnection={deleteConnection}
+        onSelectTab={selectTab}
+        onImportConnections={importConnections}
+        onExportConnections={exportConnections}
+      />
 
       <div className="main-content">
-        <div className="sidebar">
-          <div className="sidebar-header">
-            <h3>Saved Stuff</h3>
-            <div className="sidebar-toggle">
-              <button className={activeSidebarTab === "queries" ? "active" : ""} onClick={() => setActiveSidebarTab("queries")} type="button">Queries</button>
-              <button className={activeSidebarTab === "results" ? "active" : ""} onClick={() => setActiveSidebarTab("results")} type="button">Results</button>
-            </div>
-          </div>
-          <div className="query-list">
-            {(activeSidebarTab === "queries" ? savedQueries : savedResults).map((item) => (
-              <div
-                className={`query-item ${item.active ? "active" : ""}`}
-                key={item.id}
-                onClick={() => (activeSidebarTab === "queries" ? selectQuery(item as SavedQuery) : selectResult(item as SavedResult))}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => event.key === "Enter" && (activeSidebarTab === "queries" ? selectQuery(item as SavedQuery) : selectResult(item as SavedResult))}
-              >
-                <div className="query-content">
-                  <span className="query-name">{item.name}</span>
-                  <span className="query-preview">
-                    {activeSidebarTab === "queries" ? `${(item as SavedQuery).query.substring(0, 50)}...` : `${(item as SavedResult).records.length} records`}
-                  </span>
-                </div>
-                <button
-                  className="delete-query"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (activeSidebarTab === "queries") {
-                      deleteQuery(item as SavedQuery);
-                    } else {
-                      deleteResult(item as SavedResult);
-                    }
-                  }}
-                  type="button"
-                >
-                  X
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+        <Sidebar
+          activeSidebarTab={activeSidebarTab}
+          savedQueries={savedQueries}
+          savedResults={savedResults}
+          onSetSidebarTab={setActiveSidebarTab}
+          onSelectQuery={selectQuery}
+          onSelectResult={selectResult}
+          onDeleteQuery={deleteQuery}
+          onDeleteResult={deleteResult}
+        />
 
-        <div className="content-area">
-          <div className="data-view">
-            <div className={`table-section ${selectedRecord ? "with-detail" : ""}`}>
-              <div className="table-header">
-                <h3>Query Results</h3>
-                {records.length > 0 && (
-                  <>
-                    <button className="button save-button" onClick={promptSaveResult} type="button">Save Results</button>
-                    <span className="record-count">{records.length} records</span>
-                  </>
-                )}
-              </div>
-
-              {isLoading ? (
-                <div className="loading-state"><div className="spinner"></div><p>Executing query...</p></div>
-              ) : queryError ? (
-                <div className="error-state"><h4>Query Error</h4><p>{queryError.message}</p></div>
-              ) : (
-                <div className="records-table" ref={recordsTableRef}>
-                  <table>
-                    <thead><tr>{records.length > 0 ? recordColumns.map((column) => <th key={column}>{column}</th>) : <th>No Data</th>}</tr></thead>
-                    <tbody>
-                      {records.length > 0 ? (
-                        records.map((record, index) => (
-                          <tr className={`record-row ${selectedRecord === record ? "active" : ""}`} key={index} onClick={() => selectRecord(record)}>
-                            {Object.values(record).map((value, valueIndex) => (
-                              <td className="truncate" key={`${index}-${valueIndex}`} title={String(value)}>{String(value)}</td>
-                            ))}
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan={100} className="no-data"><div className="empty-table"><p>No records found</p></div></td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div className={`detail-view ${selectedRecord ? "visible" : ""}`}>
-              <div className="detail-header">
-                <h4>Record Details</h4>
-                <button className="close-detail" onClick={() => setSelectedRecord(null)} type="button">X</button>
-              </div>
-              {selectedRecord ? (
-                <div className="detail-content">
-                  {Object.entries(selectedRecord).map(([key, value]) => {
-                    const valueType = getValueType(value);
-                    return (
-                      <div className="detail-item" key={key}>
-                        <div className="detail-key"><span className="key-name">{key}</span><span className={`key-type ${valueType}`}>{valueType}</span></div>
-                        <div className="value-container">
-                          <pre className={`value-content ${valueType}`}>{prettyPrintJson(value)}</pre>
-                          <button className="copy-button" onClick={() => navigator.clipboard.writeText(String(value))} type="button">Copy</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="detail-placeholder"><p>Select a record to view details</p></div>
-              )}
-            </div>
-          </div>
-        </div>
+        <DataView
+          records={records}
+          recordColumns={recordColumns}
+          selectedRecord={selectedRecord}
+          isLoading={isLoading}
+          queryError={queryError}
+          recordsTableRef={recordsTableRef}
+          onSelectRecord={selectRecord}
+          onSaveResult={promptSaveResult}
+          onCloseDetail={() => setSelectedRecord(null)}
+          prettyPrintJson={prettyPrintJson}
+          getValueType={getValueType}
+        />
       </div>
 
-      <div className="query-section">
-        <div className="query-input-container">
-          <div className="query-header"><span className="query-label">SQL Query</span><span className="query-hint">Ctrl+Enter to execute</span></div>
-          <div className="query-editor" ref={editorContainerRef}></div>
-        </div>
-        <div className="query-actions">
-          <button className="button save-button" onClick={promptSaveQuery} type="button">Save</button>
-          {isLoading ? (
-            <button className="button cancel-button" onClick={abortQuery} type="button">Abort</button>
-          ) : (
-            <button className="button execute-button" onClick={executeQuery} disabled={isLoading} type="button">Execute</button>
-          )}
-        </div>
-      </div>
+      <QuerySection
+        editorContainerRef={editorContainerRef}
+        isLoading={isLoading}
+        onSaveQuery={promptSaveQuery}
+        onAbortQuery={abortQuery}
+        onExecuteQuery={executeQuery}
+      />
 
-      {showSaveQueryModal && (
-        <div className="modal-backdrop">
-          <div className="modal">
-            <h3>Save Query</h3>
-            <div className="form-group">
-              <label htmlFor="query-name">Query Name</label>
-              <input id="query-name" type="text" value={queryNameInModal} ref={queryNameInputRef} onChange={(event) => setQueryNameInModal(event.target.value)} onKeyDown={(event) => event.key === "Enter" && saveQueryConfirmed()} />
-            </div>
-            <div className="modal-buttons">
-              <button className="button cancel-button" onClick={() => setShowSaveQueryModal(false)} type="button">Cancel</button>
-              <button className="button save-button" onClick={saveQueryConfirmed} type="button">Save</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SaveNameModal
+        show={showSaveQueryModal}
+        title="Save Query"
+        inputId="query-name"
+        label="Query Name"
+        value={queryNameInModal}
+        inputRef={queryNameInputRef}
+        onChange={setQueryNameInModal}
+        onClose={() => setShowSaveQueryModal(false)}
+        onSave={saveQueryConfirmed}
+      />
 
-      {showSaveResultModal && (
-        <div className="modal-backdrop">
-          <div className="modal">
-            <h3>Save Result</h3>
-            <div className="form-group">
-              <label htmlFor="result-name">Result Name</label>
-              <input id="result-name" type="text" value={resultNameInModal} ref={resultNameInputRef} onChange={(event) => setResultNameInModal(event.target.value)} onKeyDown={(event) => event.key === "Enter" && saveResultConfirmed()} />
-            </div>
-            <div className="modal-buttons">
-              <button className="button cancel-button" onClick={() => setShowSaveResultModal(false)} type="button">Cancel</button>
-              <button className="button save-button" onClick={saveResultConfirmed} type="button">Save</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SaveNameModal
+        show={showSaveResultModal}
+        title="Save Result"
+        inputId="result-name"
+        label="Result Name"
+        value={resultNameInModal}
+        inputRef={resultNameInputRef}
+        onChange={setResultNameInModal}
+        onClose={() => setShowSaveResultModal(false)}
+        onSave={saveResultConfirmed}
+      />
     </div>
   );
 }
