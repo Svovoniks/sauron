@@ -1,4 +1,4 @@
-import { useRef, type WheelEvent } from "react";
+import { useEffect, useRef, type WheelEvent } from "react";
 import type { Connection } from "../types/app";
 
 interface ConnectionTabsProps {
@@ -21,6 +21,8 @@ export function ConnectionTabs({
   onExportConnections,
 }: ConnectionTabsProps) {
   const tabsContainerRef = useRef<HTMLDivElement | null>(null);
+  const velocityRef = useRef(0);
+  const animationFrameRef = useRef<number | null>(null);
 
   const isConnectionInvalid = (connection: Connection) => {
     return (
@@ -39,8 +41,40 @@ export function ConnectionTabs({
     if (event.deltaY === 0) return;
 
     event.preventDefault();
-    container.scrollLeft += event.deltaY;
+
+    velocityRef.current += event.deltaY * 0.35;
+
+    if (animationFrameRef.current !== null) return;
+
+    const animate = () => {
+      const activeContainer = tabsContainerRef.current;
+      if (!activeContainer) {
+        animationFrameRef.current = null;
+        return;
+      }
+
+      activeContainer.scrollLeft += velocityRef.current;
+      velocityRef.current *= 0.82;
+
+      if (Math.abs(velocityRef.current) < 0.2) {
+        velocityRef.current = 0;
+        animationFrameRef.current = null;
+        return;
+      }
+
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
   };
+
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="connection-tabs" onWheel={handleWheelScroll} ref={tabsContainerRef}>
