@@ -39,8 +39,6 @@ export default function App() {
   const [resultNameInModal, setResultNameInModal] = useState("");
   const [activeSidebarTab, setActiveSidebarTab] = useState<"queries" | "results">("queries");
 
-  const { editorRef, editorContainerRef } = useSqlEditor(queryText, setQueryText);
-
   const activeConnection = useMemo(() => connections.find((connection) => connection.active) ?? null, [connections]);
   const savedQueries = activeConnection ? allSavedQueries[activeConnection.id] || [] : [];
   const savedResults = activeConnection ? allSavedResults[activeConnection.id] || [] : [];
@@ -161,6 +159,8 @@ export default function App() {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
   };
+
+  const { editorRef, editorContainerRef } = useSqlEditor(queryText, setQueryText, executeQuery);
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {

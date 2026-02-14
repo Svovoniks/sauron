@@ -9,10 +9,19 @@ import "monaco-sql-languages/esm/languages/pgsql/pgsql.contribution";
 import "monaco-sql-languages/esm/languages/spark/spark.contribution";
 import "monaco-sql-languages/esm/languages/trino/trino.contribution";
 
-export function useSqlEditor(queryText: string, setQueryText: (value: string) => void) {
+export function useSqlEditor(
+  queryText: string,
+  setQueryText: (value: string) => void,
+  onExecuteQuery: () => void,
+) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
+  const onExecuteQueryRef = useRef(onExecuteQuery);
+
+  useEffect(() => {
+    onExecuteQueryRef.current = onExecuteQuery;
+  }, [onExecuteQuery]);
 
   useEffect(() => {
     let resizeObserver: ResizeObserver | null = null;
@@ -45,6 +54,7 @@ export function useSqlEditor(queryText: string, setQueryText: (value: string) =>
       });
 
       editor.onDidChangeModelContent(() => setQueryText(editor.getValue()));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => onExecuteQueryRef.current());
       resizeObserver = new ResizeObserver(() => editor.layout());
       resizeObserver.observe(container);
       editorRef.current = editor;
