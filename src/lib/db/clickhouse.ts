@@ -33,11 +33,11 @@ export function setRecordsClick(sql: string, connection: any, setResults: (resul
             const result = await resultSet.json<Data>()
             console.log('Query result:', result);
             setResults(result);
-        }).catch((error) => {
+        }).catch((error: unknown) => {
             console.error('ClickHouse query error:', error);
-            onError(error);
+            onError(error instanceof Error ? error : new Error(String(error)));
         });
-    } catch (err) {
-        onError(err)
+    } catch (err: unknown) {
+        onError(err instanceof Error ? err : new Error(String(err)))
     }
 }
