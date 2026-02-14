@@ -14,6 +14,7 @@ import { getValueType, prettyPrintJson } from "./utils/record";
 
 export default function App() {
   const recordsTableRef = useRef<HTMLDivElement | null>(null);
+  const connectionNameInputRef = useRef<HTMLInputElement | null>(null);
   const queryNameInputRef = useRef<HTMLInputElement | null>(null);
   const resultNameInputRef = useRef<HTMLInputElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -102,6 +103,10 @@ export default function App() {
     persistQueries(nextQueries);
     persistResults(nextResults);
   }, []);
+
+  useEffect(() => {
+    if (showConnectionModal) connectionNameInputRef.current?.focus();
+  }, [showConnectionModal]);
 
   useEffect(() => {
     if (showSaveQueryModal) queryNameInputRef.current?.focus();
@@ -468,6 +473,7 @@ export default function App() {
         show={showConnectionModal}
         editingConnection={editingConnection}
         connectionInModal={connectionInModal}
+        connectionNameInputRef={connectionNameInputRef}
         showPassword={showPassword}
         onClose={() => setShowConnectionModal(false)}
         onSave={saveConnection}

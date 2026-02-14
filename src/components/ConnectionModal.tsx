@@ -1,9 +1,11 @@
+import type { RefObject } from "react";
 import type { Connection } from "../types/app";
 
 interface ConnectionModalProps {
   show: boolean;
   editingConnection: Connection | null;
   connectionInModal: Connection;
+  connectionNameInputRef?: RefObject<HTMLInputElement>;
   showPassword: boolean;
   onClose: () => void;
   onSave: () => void;
@@ -16,6 +18,7 @@ export function ConnectionModal({
   show,
   editingConnection,
   connectionInModal,
+  connectionNameInputRef,
   showPassword,
   onClose,
   onSave,
@@ -49,7 +52,15 @@ export function ConnectionModal({
           </div>
           <div className="form-group">
             <label htmlFor="connection-name">Connection Name</label>
-            <input id="connection-name" type="text" placeholder="stage" autoCorrect="off" value={connectionInModal.name} onChange={(event) => onFieldChange("name", event.target.value)} />
+            <input
+              id="connection-name"
+              type="text"
+              placeholder="stage"
+              autoCorrect="off"
+              ref={connectionNameInputRef}
+              value={connectionInModal.name}
+              onChange={(event) => onFieldChange("name", event.target.value)}
+            />
           </div>
           <div className="host-port-group">
             <div className="form-group">
