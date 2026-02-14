@@ -46,14 +46,21 @@ export function Sidebar({
                   <span className="query-preview">{`${query.query.substring(0, 50)}...`}</span>
                 </div>
                 <button
+                  aria-label="Delete saved query"
                   className="delete-query"
                   onClick={(event) => {
                     event.stopPropagation();
                     onDeleteQuery(query);
                   }}
+                  title="Delete saved query"
                   type="button"
                 >
-                  X
+                  <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                    <path d="M3 6h18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                    <path d="M8 6V4h8v2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                    <path d="M19 6v14H5V6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                    <path d="M10 11v6M14 11v6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                  </svg>
                 </button>
               </div>
             ))
@@ -71,14 +78,21 @@ export function Sidebar({
                   <span className="query-preview">{`${result.records.length} records`}</span>
                 </div>
                 <button
+                  aria-label="Delete saved result"
                   className="delete-query"
                   onClick={(event) => {
                     event.stopPropagation();
                     onDeleteResult(result);
                   }}
+                  title="Delete saved result"
                   type="button"
                 >
-                  X
+                  <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                    <path d="M3 6h18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                    <path d="M8 6V4h8v2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                    <path d="M19 6v14H5V6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                    <path d="M10 11v6M14 11v6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                  </svg>
                 </button>
               </div>
             ))}

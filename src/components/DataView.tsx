@@ -44,7 +44,21 @@ export function DataView({
           {isLoading ? (
             <div className="loading-state"><div className="spinner"></div><p>Executing query...</p></div>
           ) : queryError ? (
-            <div className="error-state"><h4>Query Error</h4><p>{queryError.message}</p></div>
+            <div className="error-state">
+              <svg aria-hidden="true" className="error-icon" fill="none" viewBox="0 0 24 24">
+                <path
+                  d="M12 3 2.6 19.5h18.8L12 3Z"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                />
+                <path d="M12 9v5" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+                <circle cx="12" cy="16.5" fill="currentColor" r="1" />
+              </svg>
+              <h4>Query Error</h4>
+              <p>{queryError.message}</p>
+            </div>
           ) : (
             <div className="records-table" ref={recordsTableRef}>
               <table>
@@ -81,7 +95,36 @@ export function DataView({
                     <div className="detail-key"><span className="key-name">{key}</span><span className={`key-type ${valueType}`}>{valueType}</span></div>
                     <div className="value-container">
                       <pre className={`value-content ${valueType}`}>{prettyPrintJson(value)}</pre>
-                      <button className="copy-button" onClick={() => navigator.clipboard.writeText(String(value))} type="button">Copy</button>
+                      <button
+                        aria-label="Copy value"
+                        className="copy-button"
+                        onClick={() => navigator.clipboard.writeText(String(value))}
+                        title="Copy value"
+                        type="button"
+                      >
+                        <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                          <rect
+                            height="13"
+                            rx="2"
+                            ry="2"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            width="13"
+                            x="9"
+                            y="9"
+                          />
+                          <rect
+                            height="13"
+                            rx="2"
+                            ry="2"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            width="13"
+                            x="2"
+                            y="2"
+                          />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 );

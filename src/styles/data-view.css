@@ -131,6 +131,13 @@ td {
   margin: 0;
 }
 
+.error-icon {
+  width: 36px;
+  height: 36px;
+  color: #f87171;
+  flex-shrink: 0;
+}
+
 .detail-view {
   background: linear-gradient(135deg, rgba(26, 26, 46, 0.95), rgba(22, 33, 62, 0.95));
   border: 1px solid rgba(148, 163, 184, 0.2);
