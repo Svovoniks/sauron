@@ -29,21 +29,28 @@ export function SaveNameModal({
     <div className="modal-backdrop">
       <div className="modal">
         <h3>{title}</h3>
-        <div className="form-group">
-          <label htmlFor={inputId}>{label}</label>
-          <input
-            id={inputId}
-            type="text"
-            value={value}
-            ref={inputRef}
-            onChange={(event) => onChange(event.target.value)}
-            onKeyDown={(event) => event.key === "Enter" && onSave()}
-          />
-        </div>
-        <div className="modal-buttons">
-          <button className="button cancel-button" onClick={onClose} type="button">Cancel</button>
-          <button className="button save-button" onClick={onSave} type="button">Save</button>
-        </div>
+        <form
+          className="modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSave();
+          }}
+        >
+          <div className="form-group">
+            <label htmlFor={inputId}>{label}</label>
+            <input
+              id={inputId}
+              type="text"
+              value={value}
+              ref={inputRef}
+              onChange={(event) => onChange(event.target.value)}
+            />
+          </div>
+          <div className="modal-buttons">
+            <button className="button cancel-button" onClick={onClose} type="button">Cancel</button>
+            <button className="button save-button" type="submit">Save</button>
+          </div>
+        </form>
       </div>
     </div>
   );
