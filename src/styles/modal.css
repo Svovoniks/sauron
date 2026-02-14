@@ -115,6 +115,12 @@
   background-clip: text;
 }
 
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
 .form-group {
   display: flex;
   flex-direction: column;
