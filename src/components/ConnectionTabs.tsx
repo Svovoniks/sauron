@@ -1,3 +1,4 @@
+import { useRef, type WheelEvent } from "react";
 import type { Connection } from "../types/app";
 
 interface ConnectionTabsProps {
@@ -19,6 +20,8 @@ export function ConnectionTabs({
   onImportConnections,
   onExportConnections,
 }: ConnectionTabsProps) {
+  const tabsContainerRef = useRef<HTMLDivElement | null>(null);
+
   const isConnectionInvalid = (connection: Connection) => {
     return (
       !connection.name.trim() ||
@@ -29,8 +32,18 @@ export function ConnectionTabs({
     );
   };
 
+  const handleWheelScroll = (event: WheelEvent<HTMLDivElement>) => {
+    const container = tabsContainerRef.current;
+    if (!container) return;
+    if (container.scrollWidth <= container.clientWidth) return;
+    if (event.deltaY === 0) return;
+
+    event.preventDefault();
+    container.scrollLeft += event.deltaY;
+  };
+
   return (
-    <div className="connection-tabs">
+    <div className="connection-tabs" onWheel={handleWheelScroll} ref={tabsContainerRef}>
       {connections.map((connection) => {
         const isInvalid = isConnectionInvalid(connection);
         return (
