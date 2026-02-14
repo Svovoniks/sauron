@@ -1,0 +1,162 @@
+.connection-tabs {
+  padding: 8px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  scrollbar-color: #aaa transparent;
+}
+
+.connection-tabs > * {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.tab-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 8px;
+  transition: all 0.3s ease;
+}
+
+.tab-container:hover {
+  border-color: rgba(148, 163, 184, 0.4);
+  transform: translateY(-1px);
+}
+
+.tab {
+  flex-grow: 1;
+  padding: 8px 12px;
+  background: rgba(51, 65, 85, 0.6);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.tab:hover {
+  background: rgba(71, 85, 105, 0.8);
+}
+
+.tab.active {
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: white;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.tab-actions {
+  align-self: center;
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.edit-tab,
+.delete-tab {
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 24px;
+  font-size: 12px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.edit-tab {
+  background: rgba(245, 158, 11, 0.8);
+}
+
+.delete-tab {
+  background: rgba(239, 68, 68, 0.8);
+}
+
+.edit-tab:hover,
+.delete-tab:hover {
+  transform: scale(1.1);
+  opacity: 1;
+}
+
+.add-tab {
+  width: 40px;
+  height: 40px;
+  background: rgba(34, 197, 94, 0.15);
+  border: 2px dashed rgba(34, 197, 94, 0.4);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 20px;
+  font-weight: bold;
+  color: #22c55e;
+}
+
+.add-tab:hover {
+  background: rgba(34, 197, 94, 0.25);
+  border-color: #22c55e;
+  border-style: solid;
+  transform: scale(1.05);
+}
+
+.import-export-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-button,
+.export-button {
+  width: 90px;
+  padding: 0 1rem;
+  height: 30px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.import-button {
+  background: rgba(245, 158, 11, 0.15);
+  border: 2px dashed rgba(245, 158, 11, 0.4);
+  color: #f59e0b;
+}
+
+.export-button {
+  background: rgba(59, 130, 246, 0.15);
+  border: 2px dashed rgba(59, 130, 246, 0.4);
+  color: #3b82f6;
+}
+
+.import-button:hover {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: #f59e0b;
+  border-style: solid;
+  transform: scale(1.05);
+}
+
+.export-button:hover {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: #3b82f6;
+  border-style: solid;
+  transform: scale(1.05);
+}
