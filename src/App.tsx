@@ -217,8 +217,6 @@ export default function App() {
   };
 
   const saveConnection = () => {
-    if (!connectionInModal.name || !connectionInModal.host) return;
-
     const nextConnections = [...connections];
     const nextSavedQueries = { ...allSavedQueries };
     const nextSavedResults = { ...allSavedResults };
