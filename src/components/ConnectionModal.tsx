@@ -66,8 +66,42 @@ export function ConnectionModal({
           <label htmlFor="password">Password</label>
           <div className="password-input-container">
             <input id="password" type={showPassword ? "text" : "password"} autoCorrect="off" autoCapitalize="none" value={connectionInModal.password || ""} onChange={(event) => onFieldChange("password", event.target.value)} />
-            <button className="password-toggle" onClick={onTogglePassword} type="button">
-              {showPassword ? "Hide" : "Show"}
+            <button
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              className="password-toggle"
+              onClick={onTogglePassword}
+              title={showPassword ? "Hide password" : "Show password"}
+              type="button"
+            >
+              {showPassword ? (
+                <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                  <path
+                    d="M3 3 21 21M10.6 10.6a2 2 0 0 0 2.8 2.8"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                  />
+                  <path
+                    d="M9.9 4.2A10.9 10.9 0 0 1 12 4c5 0 9 3.8 10 8-0.4 1.7-1.4 3.2-2.7 4.4M6.1 6.1C4.3 7.6 3.2 9.7 2 12c.8 3.1 3.2 5.7 6.3 7"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                  />
+                </svg>
+              ) : (
+                <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                  <path
+                    d="M2 12c1-4.2 5-8 10-8s9 3.8 10 8c-1 4.2-5 8-10 8s-9-3.8-10-8Z"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                  />
+                  <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                </svg>
+              )}
             </button>
           </div>
         </div>

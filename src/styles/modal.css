@@ -53,7 +53,28 @@
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 20px;
+  color: #e2e8f0;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.password-toggle svg {
+  display: block;
+}
+
+.password-toggle:hover {
+  color: #f8fafc;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.password-toggle:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
 }
 
 .modal-backdrop {
