@@ -1,3 +1,4 @@
+import { useEffect, useState, type MouseEvent } from "react";
 import type { SavedQuery, SavedResult } from "../types/app";
 
 interface SidebarProps {
@@ -13,6 +14,8 @@ interface SidebarProps {
   onDeleteResult: (result: SavedResult) => void;
   onOverwriteQuery: (query: SavedQuery) => void;
   onOverwriteResult: (result: SavedResult) => void;
+  onReorderQuery: (fromId: string, toId: string) => void;
+  onReorderResult: (fromId: string, toId: string) => void;
 }
 
 export function Sidebar({
@@ -28,7 +31,33 @@ export function Sidebar({
   onDeleteResult,
   onOverwriteQuery,
   onOverwriteResult,
+  onReorderQuery,
+  onReorderResult,
 }: SidebarProps) {
+  const [draggingItem, setDraggingItem] = useState<{ id: string; type: "query" | "result" } | null>(null);
+
+  useEffect(() => {
+    const handleMouseUp = () => setDraggingItem(null);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  const startReorder = (event: MouseEvent<HTMLButtonElement>, itemId: string, itemType: "query" | "result") => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDraggingItem({ id: itemId, type: itemType });
+  };
+
+  const handleReorderHover = (targetItemId: string, targetItemType: "query" | "result") => {
+    if (!draggingItem || draggingItem.type !== targetItemType || draggingItem.id === targetItemId) return;
+
+    if (targetItemType === "query") {
+      onReorderQuery(draggingItem.id, targetItemId);
+    } else {
+      onReorderResult(draggingItem.id, targetItemId);
+    }
+  };
+
   return (
     <div className="sidebar">
       <div className="sidebar-header">
@@ -48,9 +77,11 @@ export function Sidebar({
         {activeSidebarTab === "queries"
           ? savedQueries.map((query) => (
               <div
-                className={`query-item ${query.active ? "active" : ""}`}
+                className={`query-item ${query.active ? "active" : ""} ${draggingItem?.id === query.id ? "dragging" : ""}`}
                 key={query.id}
                 onClick={() => onSelectQuery(query)}
+                onMouseEnter={() => handleReorderHover(query.id, "query")}
+                onMouseUp={() => setDraggingItem(null)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(event) => event.key === "Enter" && onSelectQuery(query)}
@@ -60,6 +91,17 @@ export function Sidebar({
                   <span className="query-preview">{`${query.query.substring(0, 50)}...`}</span>
                 </div>
                 <div className="query-actions">
+                  <button
+                    aria-label="Reorder saved query"
+                    className={`drag-query ${draggingItem?.id === query.id ? "active" : ""}`}
+                    onMouseDown={(event) => startReorder(event, query.id, "query")}
+                    title="Drag to reorder"
+                    type="button"
+                  >
+                    <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                      <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
+                    </svg>
+                  </button>
                   <button
                     aria-label="Delete saved query"
                     className="delete-query"
@@ -97,9 +139,11 @@ export function Sidebar({
             ))
           : savedResults.map((result) => (
               <div
-                className={`query-item ${result.active ? "active" : ""}`}
+                className={`query-item ${result.active ? "active" : ""} ${draggingItem?.id === result.id ? "dragging" : ""}`}
                 key={result.id}
                 onClick={() => onSelectResult(result)}
+                onMouseEnter={() => handleReorderHover(result.id, "result")}
+                onMouseUp={() => setDraggingItem(null)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(event) => event.key === "Enter" && onSelectResult(result)}
@@ -109,6 +153,17 @@ export function Sidebar({
                   <span className="query-preview">{`${result.records.length} records`}</span>
                 </div>
                 <div className="query-actions">
+                  <button
+                    aria-label="Reorder saved result"
+                    className={`drag-query ${draggingItem?.id === result.id ? "active" : ""}`}
+                    onMouseDown={(event) => startReorder(event, result.id, "result")}
+                    title="Drag to reorder"
+                    type="button"
+                  >
+                    <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                      <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
+                    </svg>
+                  </button>
                   <button
                     aria-label="Delete saved result"
                     className="delete-query"

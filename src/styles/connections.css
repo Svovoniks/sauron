@@ -41,6 +41,16 @@
   border-color: rgba(252, 165, 165, 0.75);
 }
 
+.tab-container.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+.tab-container.drop-target {
+  border-color: rgba(59, 130, 246, 0.85);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
 .tab {
   flex-grow: 1;
   padding: 8px 12px;
@@ -72,7 +82,8 @@
 }
 
 .edit-tab,
-.delete-tab {
+.delete-tab,
+.drag-tab {
   color: white;
   border: none;
   cursor: pointer;
@@ -94,8 +105,19 @@
   background: rgba(239, 68, 68, 0.8);
 }
 
+.drag-tab {
+  background: rgba(100, 116, 139, 0.8);
+  cursor: grab;
+}
+
+.drag-tab.active {
+  background: rgba(59, 130, 246, 0.85);
+  cursor: grabbing;
+}
+
 .edit-tab:hover,
-.delete-tab:hover {
+.delete-tab:hover,
+.drag-tab:hover {
   transform: scale(1.1);
   opacity: 1;
 }
