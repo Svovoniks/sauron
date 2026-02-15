@@ -1,6 +1,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ConfirmModal } from "./components/ConfirmModal";
 import { ConnectionModal } from "./components/ConnectionModal";
 import { ConnectionTabs } from "./components/ConnectionTabs";
 import { DataView } from "./components/DataView";
@@ -11,6 +12,11 @@ import { useSqlEditor } from "./hooks/useSqlEditor";
 import { setRecords } from "./lib/db/common";
 import { emptyConnection, type Connection, type SavedQuery, type SavedResult } from "./types/app";
 import { getValueType, prettyPrintJson } from "./utils/record";
+
+type PendingDelete =
+  | { type: "connection"; item: Connection }
+  | { type: "query"; item: SavedQuery; scope: "local" | "global" }
+  | { type: "result"; item: SavedResult; scope: "local" | "global" };
 
 export default function App() {
   const recordsTableRef = useRef<HTMLDivElement | null>(null);
@@ -40,6 +46,7 @@ export default function App() {
   const [queryNameInModal, setQueryNameInModal] = useState("");
   const [showSaveResultModal, setShowSaveResultModal] = useState(false);
   const [resultNameInModal, setResultNameInModal] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [activeSaveScope, setActiveSaveScope] = useState<"local" | "global">("local");
   const [activeSidebarTab, setActiveSidebarTab] = useState<"queries" | "results">("queries");
 
@@ -205,6 +212,7 @@ export default function App() {
         if (showConnectionModal) return setShowConnectionModal(false);
         if (showSaveQueryModal) return setShowSaveQueryModal(false);
         if (showSaveResultModal) return setShowSaveResultModal(false);
+        if (pendingDelete) return setPendingDelete(null);
         if (selectedRecord) return setSelectedRecord(null);
       }
 
@@ -232,7 +240,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, [records, selectedRecord, showConnectionModal, showSaveQueryModal, showSaveResultModal]);
+  }, [records, selectedRecord, showConnectionModal, showSaveQueryModal, showSaveResultModal, pendingDelete]);
 
   const addConnection = () => {
     setEditingConnection(null);
@@ -330,8 +338,8 @@ export default function App() {
     setShowSaveQueryModal(false);
   };
 
-  const deleteQuery = (queryToDelete: SavedQuery) => {
-    if (activeSaveScope === "global") {
+  const deleteQuery = (queryToDelete: SavedQuery, scope: "local" | "global" = activeSaveScope) => {
+    if (scope === "global") {
       const nextGlobalSavedQueries = globalSavedQueries.filter((query) => query.id !== queryToDelete.id);
       setGlobalSavedQueries(nextGlobalSavedQueries);
       persistGlobalQueries(nextGlobalSavedQueries);
@@ -404,8 +412,8 @@ export default function App() {
     setShowSaveResultModal(false);
   };
 
-  const deleteResult = (resultToDelete: SavedResult) => {
-    if (activeSaveScope === "global") {
+  const deleteResult = (resultToDelete: SavedResult, scope: "local" | "global" = activeSaveScope) => {
+    if (scope === "global") {
       const nextGlobalSavedResults = globalSavedResults.filter((result) => result.id !== resultToDelete.id);
       setGlobalSavedResults(nextGlobalSavedResults);
       persistGlobalResults(nextGlobalSavedResults);
@@ -619,6 +627,57 @@ export default function App() {
     setSelectedRecord((currentRecord: any) => (currentRecord === record ? null : record));
   };
 
+  const requestDeleteConnection = (connection: Connection) => {
+    setPendingDelete({ type: "connection", item: connection });
+  };
+
+  const requestDeleteQuery = (query: SavedQuery) => {
+    setPendingDelete({ type: "query", item: query, scope: activeSaveScope });
+  };
+
+  const requestDeleteResult = (result: SavedResult) => {
+    setPendingDelete({ type: "result", item: result, scope: activeSaveScope });
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+
+    if (pendingDelete.type === "connection") {
+      deleteConnection(pendingDelete.item);
+    } else if (pendingDelete.type === "query") {
+      deleteQuery(pendingDelete.item, pendingDelete.scope);
+    } else {
+      deleteResult(pendingDelete.item, pendingDelete.scope);
+    }
+
+    setPendingDelete(null);
+  };
+
+  const getDeleteModalText = () => {
+    if (!pendingDelete) return { title: "", message: "" };
+
+    if (pendingDelete.type === "connection") {
+      const name = pendingDelete.item.name || "Unnamed";
+      return { title: "Delete Connection", message: `Are you sure you want to delete "${name}"?` };
+    }
+
+    if (pendingDelete.type === "query") {
+      const scopeLabel = pendingDelete.scope === "global" ? "global " : "";
+      return {
+        title: "Delete Query",
+        message: `Are you sure you want to delete ${scopeLabel}saved query "${pendingDelete.item.name}"?`,
+      };
+    }
+
+    const scopeLabel = pendingDelete.scope === "global" ? "global " : "";
+    return {
+      title: "Delete Result",
+      message: `Are you sure you want to delete ${scopeLabel}saved result "${pendingDelete.item.name}"?`,
+    };
+  };
+
+  const deleteModalText = getDeleteModalText();
+
   return (
     <div className="app-container">
       <ConnectionModal
@@ -638,7 +697,7 @@ export default function App() {
         connections={connections}
         onAddConnection={addConnection}
         onEditConnection={editConnection}
-        onDeleteConnection={deleteConnection}
+        onDeleteConnection={requestDeleteConnection}
         onSelectTab={selectTab}
         onImportConnections={importConnections}
         onExportConnections={exportConnections}
@@ -654,8 +713,8 @@ export default function App() {
           onSetSidebarTab={setActiveSidebarTab}
           onSelectQuery={selectQuery}
           onSelectResult={selectResult}
-          onDeleteQuery={deleteQuery}
-          onDeleteResult={deleteResult}
+          onDeleteQuery={requestDeleteQuery}
+          onDeleteResult={requestDeleteResult}
           onOverwriteQuery={overwriteQuery}
           onOverwriteResult={overwriteResult}
         />
@@ -705,6 +764,15 @@ export default function App() {
         onChange={setResultNameInModal}
         onClose={() => setShowSaveResultModal(false)}
         onSave={saveResultConfirmed}
+      />
+
+      <ConfirmModal
+        show={Boolean(pendingDelete)}
+        title={deleteModalText.title}
+        message={deleteModalText.message}
+        confirmText="Delete"
+        onClose={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
       />
     </div>
   );
