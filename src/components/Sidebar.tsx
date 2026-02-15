@@ -33,12 +33,12 @@ export function Sidebar({
     <div className="sidebar">
       <div className="sidebar-header">
         <h3>Saved Stuff</h3>
-      </div>
-      <div className="sidebar-controls">
-        <div className="sidebar-toggle">
+        <div className="sidebar-toggle sidebar-scope-toggle">
           <button className={activeSaveScope === "local" ? "active" : ""} onClick={() => onSetSaveScope("local")} type="button">Local</button>
           <button className={activeSaveScope === "global" ? "active" : ""} onClick={() => onSetSaveScope("global")} type="button">Global</button>
         </div>
+      </div>
+      <div className="sidebar-controls">
         <div className="sidebar-toggle">
           <button className={activeSidebarTab === "queries" ? "active" : ""} onClick={() => onSetSidebarTab("queries")} type="button">Queries</button>
           <button className={activeSidebarTab === "results" ? "active" : ""} onClick={() => onSetSidebarTab("results")} type="button">Results</button>
