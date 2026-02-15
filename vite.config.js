@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
-import { sveltekit } from "@sveltejs/kit/vite";
+import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -8,7 +8,7 @@ import nodePolyfills from 'vite-plugin-node-stdlib-browser'
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-    plugins: [sveltekit(), nodePolyfills()],
+    plugins: [react(), nodePolyfills()],
 
     // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
     //
