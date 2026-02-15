@@ -1,11 +1,17 @@
 import type { RefObject } from "react";
 
+interface QueryOutput {
+  title: string;
+  text: string;
+}
+
 interface DataViewProps {
   records: any[];
   recordColumns: string[];
   selectedRecord: any | null;
   isLoading: boolean;
   queryError: Error | null;
+  queryOutput: QueryOutput | null;
   recordsTableRef: RefObject<HTMLDivElement>;
   onSelectRecord: (record: any) => void;
   onSaveResult: () => void;
@@ -20,6 +26,7 @@ export function DataView({
   selectedRecord,
   isLoading,
   queryError,
+  queryOutput,
   recordsTableRef,
   onSelectRecord,
   onSaveResult,
@@ -43,6 +50,14 @@ export function DataView({
 
           {isLoading ? (
             <div className="loading-state"><div className="spinner"></div><p>Executing query...</p></div>
+          ) : queryOutput ? (
+            <div className="command-output-state">
+              <svg aria-hidden="true" className="command-output-icon" fill="none" viewBox="0 0 24 24">
+                <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+              </svg>
+              <h4>{queryOutput.title}</h4>
+              <pre>{queryOutput.text}</pre>
+            </div>
           ) : queryError ? (
             <div className="error-state">
               <svg aria-hidden="true" className="error-icon" fill="none" viewBox="0 0 24 24">
