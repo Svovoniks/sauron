@@ -130,3 +130,32 @@
   background: rgba(239, 68, 68, 1);
   transform: scale(1.1);
 }
+
+.query-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 10px;
+  flex-shrink: 0;
+}
+
+.overwrite-query {
+  background: rgba(249, 115, 22, 0.85);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.overwrite-query:hover {
+  background: rgba(249, 115, 22, 1);
+  transform: scale(1.1);
+}
