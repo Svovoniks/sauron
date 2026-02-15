@@ -3,9 +3,6 @@ import { createClient } from '@clickhouse/client-web'
 type Data = { number: string }
 
 export function setRecordsClick(statements: string[], connection: any, setResults: (results: unknown[]) => void, onError: (error: Error) => void, signal: AbortSignal) {
-    console.log('Executing query with connection click:', connection);
-    console.log('Statements:', statements);
-
     let host = connection.host;
     if (!host.startsWith('http://') && !host.startsWith('https://')) {
         host = 'http://' + host;
@@ -22,8 +19,6 @@ export function setRecordsClick(statements: string[], connection: any, setResult
             request_timeout: 30000,
             session_id: crypto.randomUUID(),
         })
-
-        console.log('client:', client);
 
         void (async () => {
             for (let index = 0; index < statements.length; index += 1) {
@@ -51,7 +46,6 @@ export function setRecordsClick(statements: string[], connection: any, setResult
                 });
 
                 const result = await resultSet.json<Data>();
-                console.log('Query result:', result);
                 setResults(result);
             }
         })().catch((error: unknown) => {

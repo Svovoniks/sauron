@@ -31,12 +31,24 @@ const reorderById = <T extends { id: string }>(items: T[], fromId: string, toId:
   return nextItems;
 };
 
+const parseStoredJson = <T,>(key: string, raw: string | null, fallback: T): T => {
+  if (!raw) return fallback;
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    console.warn(`Failed to parse localStorage key "${key}". Resetting to default value.`, error);
+    return fallback;
+  }
+};
+
 export default function App() {
   const recordsTableRef = useRef<HTMLDivElement | null>(null);
   const connectionNameInputRef = useRef<HTMLInputElement | null>(null);
   const queryNameInputRef = useRef<HTMLInputElement | null>(null);
   const resultNameInputRef = useRef<HTMLInputElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const isExecutingQueryRef = useRef(false);
 
   const [connections, setConnections] = useState<Connection[]>([]);
   const [allSavedQueries, setAllSavedQueries] = useState<Record<string, SavedQuery[]>>({});
@@ -85,60 +97,85 @@ export default function App() {
     const storedGlobalQueries = localStorage.getItem("globalSavedQueries");
     const storedGlobalResults = localStorage.getItem("globalSavedResults");
 
+    const parsedConnections = parseStoredJson<unknown[]>("connections", storedConnections, []);
+    const parsedQueries = parseStoredJson<unknown>("savedQueries", storedQueries, {});
+    const parsedResults = parseStoredJson<Record<string, unknown>>("savedResults", storedResults, {});
+    const parsedGlobalQueries = parseStoredJson<unknown[]>("globalSavedQueries", storedGlobalQueries, []);
+    const parsedGlobalResults = parseStoredJson<unknown[]>("globalSavedResults", storedGlobalResults, []);
+
     let nextConnections: Connection[] = [];
-    if (storedConnections) {
-      nextConnections = JSON.parse(storedConnections).map((connection: Connection) => ({
-        ...connection,
-        id: connection.id || crypto.randomUUID(),
-      }));
+    if (Array.isArray(parsedConnections)) {
+      nextConnections = parsedConnections.map((connection) => {
+        const typedConnection = connection as Connection;
+        return {
+          ...typedConnection,
+          id: typedConnection.id || crypto.randomUUID(),
+        };
+      });
       if (nextConnections.length > 0) {
         nextConnections = nextConnections.map((connection, index) => ({ ...connection, active: index === 0 }));
       }
     }
 
     let nextQueries: Record<string, SavedQuery[]> = {};
-    if (storedQueries) {
-      const parsed = JSON.parse(storedQueries);
-      if (Array.isArray(parsed)) {
-        if (nextConnections.length > 0) {
-          nextQueries[nextConnections[0].id] = parsed.map((query: SavedQuery) => ({
-            ...query,
-            id: query.id || crypto.randomUUID(),
-          }));
-        }
-      } else {
-        for (const connectionId in parsed) {
-          nextQueries[connectionId] = parsed[connectionId].map((query: SavedQuery) => ({
-            ...query,
-            id: query.id || crypto.randomUUID(),
-          }));
-        }
+    if (Array.isArray(parsedQueries)) {
+      if (nextConnections.length > 0) {
+        nextQueries[nextConnections[0].id] = parsedQueries.map((query) => {
+          const typedQuery = query as SavedQuery;
+          return {
+            ...typedQuery,
+            id: typedQuery.id || crypto.randomUUID(),
+          };
+        });
+      }
+    } else if (parsedQueries && typeof parsedQueries === "object") {
+      const parsedQueryRecord = parsedQueries as Record<string, unknown>;
+      for (const connectionId in parsedQueryRecord) {
+        const connectionQueries = parsedQueryRecord[connectionId];
+        if (!Array.isArray(connectionQueries)) continue;
+        nextQueries[connectionId] = connectionQueries.map((query) => {
+          const typedQuery = query as SavedQuery;
+          return {
+            ...typedQuery,
+            id: typedQuery.id || crypto.randomUUID(),
+          };
+        });
       }
     }
 
     let nextResults: Record<string, SavedResult[]> = {};
-    if (storedResults) {
-      const parsed = JSON.parse(storedResults);
-      for (const connectionId in parsed) {
-        nextResults[connectionId] = parsed[connectionId].map((result: SavedResult) => ({
-          ...result,
-          id: result.id || crypto.randomUUID(),
-        }));
+    if (parsedResults && typeof parsedResults === "object") {
+      for (const connectionId in parsedResults) {
+        const connectionResults = parsedResults[connectionId];
+        if (!Array.isArray(connectionResults)) continue;
+        nextResults[connectionId] = connectionResults.map((result) => {
+          const typedResult = result as SavedResult;
+          return {
+            ...typedResult,
+            id: typedResult.id || crypto.randomUUID(),
+          };
+        });
       }
     }
 
-    const nextGlobalQueries: SavedQuery[] = storedGlobalQueries
-      ? JSON.parse(storedGlobalQueries).map((query: SavedQuery) => ({
-          ...query,
-          id: query.id || crypto.randomUUID(),
-        }))
+    const nextGlobalQueries: SavedQuery[] = Array.isArray(parsedGlobalQueries)
+      ? parsedGlobalQueries.map((query) => {
+          const typedQuery = query as SavedQuery;
+          return {
+            ...typedQuery,
+            id: typedQuery.id || crypto.randomUUID(),
+          };
+        })
       : [];
 
-    const nextGlobalResults: SavedResult[] = storedGlobalResults
-      ? JSON.parse(storedGlobalResults).map((result: SavedResult) => ({
-          ...result,
-          id: result.id || crypto.randomUUID(),
-        }))
+    const nextGlobalResults: SavedResult[] = Array.isArray(parsedGlobalResults)
+      ? parsedGlobalResults.map((result) => {
+          const typedResult = result as SavedResult;
+          return {
+            ...typedResult,
+            id: typedResult.id || crypto.randomUUID(),
+          };
+        })
       : [];
 
     setConnections(nextConnections);
@@ -181,6 +218,7 @@ export default function App() {
   };
 
   const onQueryError = (error: Error) => {
+    isExecutingQueryRef.current = false;
     abortControllerRef.current = null;
     setQueryOutput(null);
     if (error.name === "AbortError") {
@@ -193,6 +231,9 @@ export default function App() {
   };
 
   const executeQuery = () => {
+    if (isExecutingQueryRef.current) return;
+    isExecutingQueryRef.current = true;
+
     setIsLoading(true);
     setQueryError(null);
     setQueryOutput(null);
@@ -211,6 +252,7 @@ export default function App() {
         queryText,
         activeConnection,
         (output) => {
+          isExecutingQueryRef.current = false;
           abortControllerRef.current = null;
           setRecordsState([]);
           setQueryOutput(output);
@@ -226,6 +268,7 @@ export default function App() {
       queryText,
       activeConnection,
       (newRecords: unknown[]) => {
+        isExecutingQueryRef.current = false;
         abortControllerRef.current = null;
         setRecordsState(newRecords as any[]);
         setIsLoading(false);
@@ -244,9 +287,17 @@ export default function App() {
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTextInputTarget = Boolean(
+        target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
+      );
+      const hasOpenModal = showConnectionModal || showSaveQueryModal || showSaveResultModal || Boolean(pendingDelete);
+
       if (event.ctrlKey && event.key === "Enter") {
+        if (hasOpenModal || isTextInputTarget) return;
         event.preventDefault();
         executeQuery();
+        return;
       }
 
       if (event.key === "Escape") {
@@ -257,8 +308,7 @@ export default function App() {
         if (selectedRecord) return setSelectedRecord(null);
       }
 
-      const target = event.target as HTMLElement;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+      if (isTextInputTarget) {
         return;
       }
 
@@ -281,7 +331,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, [records, selectedRecord, showConnectionModal, showSaveQueryModal, showSaveResultModal, pendingDelete]);
+  }, [executeQuery, records, selectedRecord, showConnectionModal, showSaveQueryModal, showSaveResultModal, pendingDelete]);
 
   const addConnection = () => {
     setEditingConnection(null);
@@ -706,6 +756,7 @@ export default function App() {
       }));
       setGlobalSavedResults(nextGlobalSavedResults);
       persistGlobalResults(nextGlobalSavedResults);
+      setSelectedRecord(null);
       setRecordsState(result.records);
       setQueryText(result.query);
       setQueryOutput(null);
@@ -724,6 +775,7 @@ export default function App() {
 
     setAllSavedResults(nextSavedResults);
     persistResults(nextSavedResults);
+    setSelectedRecord(null);
     setRecordsState(result.records);
     setQueryText(result.query);
     setQueryOutput(null);

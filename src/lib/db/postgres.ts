@@ -43,9 +43,6 @@ export function setRecordsPG(
     onError: (error: Error) => void,
     signal: AbortSignal
 ) {
-    console.log('Executing query with connection pg:', connection);
-    console.log('Statements:', statements);
-
     const connectionString = `postgres://${connection.username}:${encodeURIComponent(connection.password)}@${connection.host}:${connection.port}/${connection.database}`;
     const handleAbort = () => {
         void invoke("cancel_query");
