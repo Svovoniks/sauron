@@ -37,26 +37,30 @@ function toUIRowEncoding(backend_res: any): any {
 }
 
 export function setRecordsPG(
-    sql: string,
+    statements: string[],
     connection: any,
     setResults: (results: unknown[]) => void,
     onError: (error: Error) => void,
     signal: AbortSignal
 ) {
     console.log('Executing query with connection pg:', connection);
-    console.log('SQL:', sql);
+    console.log('Statements:', statements);
 
     const connectionString = `postgres://${connection.username}:${encodeURIComponent(connection.password)}@${connection.host}:${connection.port}/${connection.database}`;
-    signal.addEventListener('abort', () => {
-        invoke("cancel_query")
-    })
+    const handleAbort = () => {
+        void invoke("cancel_query");
+    };
+    signal.addEventListener("abort", handleAbort, { once: true });
 
-    invoke("execute_query", { connectionString, query: sql })
+    invoke("execute_query_batch", { connectionString, statements })
         .then((resultSet: any) => {
             setResults(toUIRowEncoding(JSON.parse(resultSet)));
         })
-        .catch((error) => {
+        .catch((error: unknown) => {
             console.error('Tauri query error:', error);
-            onError(Error(error));
+            onError(error instanceof Error ? error : new Error(String(error)));
+        })
+        .finally(() => {
+            signal.removeEventListener("abort", handleAbort);
         });
 }

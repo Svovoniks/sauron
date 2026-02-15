@@ -52,14 +52,61 @@ async fn cancel_query() {
     let _ = CHANNEL.0.send(()).await;
 }
 
+async fn execute_statements_in_session(
+    client: &Client,
+    statements: &[String],
+) -> Result<Vec<Row>, String> {
+    if statements.is_empty() {
+        return Err("No SQL statements to execute".to_string());
+    }
+
+    for statement in statements.iter().take(statements.len().saturating_sub(1)) {
+        client
+            .simple_query(statement)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    let last_statement = statements
+        .last()
+        .ok_or_else(|| "No SQL statements to execute".to_string())?;
+
+    let prepared = client
+        .prepare(last_statement)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if prepared.columns().is_empty() {
+        client
+            .execute(&prepared, &[])
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(Vec::new());
+    }
+
+    client
+        .query(&prepared, &[])
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn execute_query(connection_string: &str, query: &str) -> Result<String, String> {
+    execute_query_batch(connection_string, vec![query.to_string()]).await
+}
+
+#[tauri::command]
+async fn execute_query_batch(connection_string: &str, statements: Vec<String>) -> Result<String, String> {
+    if statements.is_empty() {
+        return Err("No SQL statements to execute".to_string());
+    }
+
     let client = setup_connection(connection_string)
         .await
         .map_err(|e| e.to_string())?;
 
     let cancel_token = client.cancel_token();
-    let query_future = async { client.query(query, &[]).await.map_err(|e| e.to_string()) };
+    let query_future = async { execute_statements_in_session(&client, &statements).await };
 
     let mut receiver = CHANNEL.1.lock().await;
 
@@ -72,11 +119,15 @@ async fn execute_query(connection_string: &str, query: &str) -> Result<String, S
         result = query_future => {
             match result {
                 Ok(arr) => rows = arr,
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(e),
             }
         }
     }
 
+    rows_to_json(rows)
+}
+
+fn rows_to_json(rows: Vec<Row>) -> Result<String, String> {
     let mut results = Vec::new();
     for row in rows {
         let mut row_data = Vec::new();
@@ -272,7 +323,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, execute_query, cancel_query])
+        .invoke_handler(tauri::generate_handler![greet, execute_query, execute_query_batch, cancel_query])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
