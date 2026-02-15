@@ -1,5 +1,6 @@
 import { setRecordsClick } from "./clickhouse";
 import { setRecordsPG } from "./postgres";
+import { MySQL, PostgreSQL, TrinoSQL } from "dt-sql-parser";
 
 type SetResults = (results: unknown[]) => void;
 type OnError = (error: Error) => void;
@@ -11,158 +12,83 @@ type SetRecordsFn = (
     signal: AbortSignal
 ) => void;
 
-function splitSqlStatements(sql: string): string[] {
-    const statements: string[] = [];
-    let currentStatement = "";
-    let index = 0;
+const postgresSqlParser = new PostgreSQL();
+const trinoSqlParser = new TrinoSQL();
+const mySqlParser = new MySQL();
 
-    let inSingleQuote = false;
-    let inDoubleQuote = false;
-    let inBacktickQuote = false;
-    let inLineComment = false;
-    let inBlockComment = false;
-    let dollarQuoteTag: string | null = null;
+type LexerToken = {
+    text?: string | null;
+    start?: number | null;
+    stop?: number | null;
+};
 
-    while (index < sql.length) {
-        const char = sql[index];
-        const nextChar = sql[index + 1];
+type SqlParserWithLexer = {
+    createLexer: (input: string) => {
+        getAllTokens: () => LexerToken[];
+    };
+};
 
-        if (inLineComment) {
-            currentStatement += char;
-            if (char === "\n") {
-                inLineComment = false;
-            }
-            index += 1;
-            continue;
-        }
+function normalizeParsedStatement(statementText: string): string {
+    return statementText.replace(/;\s*$/, "").trim();
+}
 
-        if (inBlockComment) {
-            currentStatement += char;
-            if (char === "*" && nextChar === "/") {
-                currentStatement += nextChar;
-                index += 2;
-                inBlockComment = false;
-                continue;
-            }
-            index += 1;
-            continue;
-        }
-
-        if (dollarQuoteTag !== null) {
-            if (sql.startsWith(dollarQuoteTag, index)) {
-                currentStatement += dollarQuoteTag;
-                index += dollarQuoteTag.length;
-                dollarQuoteTag = null;
-                continue;
-            }
-
-            currentStatement += char;
-            index += 1;
-            continue;
-        }
-
-        if (inSingleQuote) {
-            currentStatement += char;
-            if (char === "'" && nextChar === "'") {
-                currentStatement += nextChar;
-                index += 2;
-                continue;
-            }
-            if (char === "'") {
-                inSingleQuote = false;
-            }
-            index += 1;
-            continue;
-        }
-
-        if (inDoubleQuote) {
-            currentStatement += char;
-            if (char === "\"" && nextChar === "\"") {
-                currentStatement += nextChar;
-                index += 2;
-                continue;
-            }
-            if (char === "\"") {
-                inDoubleQuote = false;
-            }
-            index += 1;
-            continue;
-        }
-
-        if (inBacktickQuote) {
-            currentStatement += char;
-            if (char === "`") {
-                inBacktickQuote = false;
-            }
-            index += 1;
-            continue;
-        }
-
-        if (char === "-" && nextChar === "-") {
-            currentStatement += char + nextChar;
-            inLineComment = true;
-            index += 2;
-            continue;
-        }
-
-        if (char === "/" && nextChar === "*") {
-            currentStatement += char + nextChar;
-            inBlockComment = true;
-            index += 2;
-            continue;
-        }
-
-        if (char === "'") {
-            currentStatement += char;
-            inSingleQuote = true;
-            index += 1;
-            continue;
-        }
-
-        if (char === "\"") {
-            currentStatement += char;
-            inDoubleQuote = true;
-            index += 1;
-            continue;
-        }
-
-        if (char === "`") {
-            currentStatement += char;
-            inBacktickQuote = true;
-            index += 1;
-            continue;
-        }
-
-        if (char === "$") {
-            const dollarMatch = sql.slice(index).match(/^\$[A-Za-z0-9_]*\$/);
-            if (dollarMatch) {
-                dollarQuoteTag = dollarMatch[0];
-                currentStatement += dollarQuoteTag;
-                index += dollarQuoteTag.length;
-                continue;
-            }
-        }
-
-        if (char === ";") {
-            const trimmedStatement = currentStatement.trim();
-            if (trimmedStatement.length > 0) {
-                statements.push(trimmedStatement);
-            }
-            currentStatement = "";
-            index += 1;
-            continue;
-        }
-
-        currentStatement += char;
-        index += 1;
+function getParsersForDbType(dbType: string): SqlParserWithLexer[] {
+    if (dbType === "postgres") {
+        return [postgresSqlParser, trinoSqlParser, mySqlParser];
     }
 
-    const trailingStatement = currentStatement.trim();
+    if (dbType === "clickhouse") {
+        return [trinoSqlParser, mySqlParser, postgresSqlParser];
+    }
+
+    return [postgresSqlParser, trinoSqlParser, mySqlParser];
+}
+
+function splitSqlStatementsByLexer(sql: string, parser: SqlParserWithLexer): string[] | null {
+    let tokens: LexerToken[];
+    try {
+        tokens = parser.createLexer(sql).getAllTokens();
+    } catch {
+        return null;
+    }
+
+    const statements: string[] = [];
+    let statementStart = 0;
+
+    for (const token of tokens) {
+        if (token.text !== ";") {
+            continue;
+        }
+
+        const tokenStart = typeof token.start === "number" ? token.start : statementStart;
+        const tokenStop = typeof token.stop === "number" ? token.stop + 1 : tokenStart + 1;
+        const statement = normalizeParsedStatement(sql.slice(statementStart, tokenStop));
+        if (statement.length > 0) {
+            statements.push(statement);
+        }
+        statementStart = tokenStop;
+    }
+
+    const trailingStatement = normalizeParsedStatement(sql.slice(statementStart));
     if (trailingStatement.length > 0) {
         statements.push(trailingStatement);
     }
 
-    return statements;
+    return statements.length > 0 ? statements : null;
+}
+
+function splitSqlStatements(sql: string, dbType: string): string[] {
+    const parsers = getParsersForDbType(dbType);
+
+    for (const parser of parsers) {
+        const statements = splitSqlStatementsByLexer(sql, parser);
+        if (statements) {
+            return statements;
+        }
+    }
+
+    const singleStatement = normalizeParsedStatement(sql);
+    return singleStatement.length > 0 ? [singleStatement] : [];
 }
 
 export function setRecords(
@@ -172,7 +98,7 @@ export function setRecords(
     onError: OnError,
     signal: AbortSignal
 ) {
-    const statements = splitSqlStatements(sql);
+    const statements = splitSqlStatements(sql, connection.db_type);
     if (statements.length === 0) {
         onError(new Error("No SQL statement to execute."));
         return;
