@@ -86,54 +86,57 @@ export function Sidebar({
                 tabIndex={0}
                 onKeyDown={(event) => event.key === "Enter" && onSelectQuery(query)}
               >
-                <div className="query-content">
-                  <span className="query-name">{query.name}</span>
-                  <span className="query-preview">{`${query.query.substring(0, 50)}...`}</span>
-                </div>
-                <div className="query-actions">
-                  <button
-                    aria-label="Reorder saved query"
-                    className={`drag-query ${draggingItem?.id === query.id ? "active" : ""}`}
-                    onMouseDown={(event) => startReorder(event, query.id, "query")}
-                    title="Drag to reorder"
-                    type="button"
-                  >
-                    <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                      <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
-                    </svg>
-                  </button>
-                  <button
-                    aria-label="Delete saved query"
-                    className="delete-query"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onDeleteQuery(query);
-                    }}
-                    title="Delete saved query"
-                    type="button"
-                  >
-                    <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                      <path d="M3 6h18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      <path d="M8 6V4h8v2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      <path d="M19 6v14H5V6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      <path d="M10 11v6M14 11v6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                    </svg>
-                  </button>
-                  <button
-                    aria-label="Overwrite saved query"
-                    className="overwrite-query"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOverwriteQuery(query);
-                    }}
-                    title="Overwrite with current query"
-                    type="button"
-                  >
-                    <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                      <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      <path d="M21 3v6h-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                    </svg>
-                  </button>
+                <button
+                  aria-label="Reorder saved query"
+                  className={`drag-query drag-query-side ${draggingItem?.id === query.id ? "active" : ""}`}
+                  onClick={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => startReorder(event, query.id, "query")}
+                  title="Drag to reorder"
+                  type="button"
+                >
+                  <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                    <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
+                  </svg>
+                </button>
+                <div className="query-main">
+                  <div className="query-content">
+                    <span className="query-name">{query.name}</span>
+                    <span className="query-preview">{`${query.query.substring(0, 50)}...`}</span>
+                  </div>
+                  <div className="query-actions">
+                    <button
+                      aria-label="Delete saved query"
+                      className="delete-query"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDeleteQuery(query);
+                      }}
+                      title="Delete saved query"
+                      type="button"
+                    >
+                      <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                        <path d="M3 6h18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M8 6V4h8v2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M19 6v14H5V6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M10 11v6M14 11v6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                    </button>
+                    <button
+                      aria-label="Overwrite saved query"
+                      className="overwrite-query"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOverwriteQuery(query);
+                      }}
+                      title="Overwrite with current query"
+                      type="button"
+                    >
+                      <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                        <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M21 3v6h-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
             ))
@@ -148,54 +151,57 @@ export function Sidebar({
                 tabIndex={0}
                 onKeyDown={(event) => event.key === "Enter" && onSelectResult(result)}
               >
-                <div className="query-content">
-                  <span className="query-name">{result.name}</span>
-                  <span className="query-preview">{`${result.records.length} records`}</span>
-                </div>
-                <div className="query-actions">
-                  <button
-                    aria-label="Reorder saved result"
-                    className={`drag-query ${draggingItem?.id === result.id ? "active" : ""}`}
-                    onMouseDown={(event) => startReorder(event, result.id, "result")}
-                    title="Drag to reorder"
-                    type="button"
-                  >
-                    <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                      <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
-                    </svg>
-                  </button>
-                  <button
-                    aria-label="Delete saved result"
-                    className="delete-query"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onDeleteResult(result);
-                    }}
-                    title="Delete saved result"
-                    type="button"
-                  >
-                    <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                      <path d="M3 6h18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      <path d="M8 6V4h8v2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      <path d="M19 6v14H5V6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      <path d="M10 11v6M14 11v6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                    </svg>
-                  </button>
-                  <button
-                    aria-label="Overwrite saved result"
-                    className="overwrite-query"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOverwriteResult(result);
-                    }}
-                    title="Overwrite with current query and results"
-                    type="button"
-                  >
-                    <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                      <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      <path d="M21 3v6h-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                    </svg>
-                  </button>
+                <button
+                  aria-label="Reorder saved result"
+                  className={`drag-query drag-query-side ${draggingItem?.id === result.id ? "active" : ""}`}
+                  onClick={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => startReorder(event, result.id, "result")}
+                  title="Drag to reorder"
+                  type="button"
+                >
+                  <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                    <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
+                  </svg>
+                </button>
+                <div className="query-main">
+                  <div className="query-content">
+                    <span className="query-name">{result.name}</span>
+                    <span className="query-preview">{`${result.records.length} records`}</span>
+                  </div>
+                  <div className="query-actions">
+                    <button
+                      aria-label="Delete saved result"
+                      className="delete-query"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDeleteResult(result);
+                      }}
+                      title="Delete saved result"
+                      type="button"
+                    >
+                      <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                        <path d="M3 6h18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M8 6V4h8v2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M19 6v14H5V6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M10 11v6M14 11v6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                    </button>
+                    <button
+                      aria-label="Overwrite saved result"
+                      className="overwrite-query"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOverwriteResult(result);
+                      }}
+                      title="Overwrite with current query and results"
+                      type="button"
+                    >
+                      <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                        <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M21 3v6h-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
