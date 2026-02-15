@@ -1,9 +1,11 @@
 import type { SavedQuery, SavedResult } from "../types/app";
 
 interface SidebarProps {
+  activeSaveScope: "local" | "global";
   activeSidebarTab: "queries" | "results";
   savedQueries: SavedQuery[];
   savedResults: SavedResult[];
+  onSetSaveScope: (scope: "local" | "global") => void;
   onSetSidebarTab: (tab: "queries" | "results") => void;
   onSelectQuery: (query: SavedQuery) => void;
   onSelectResult: (result: SavedResult) => void;
@@ -14,9 +16,11 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+  activeSaveScope,
   activeSidebarTab,
   savedQueries,
   savedResults,
+  onSetSaveScope,
   onSetSidebarTab,
   onSelectQuery,
   onSelectResult,
@@ -29,6 +33,12 @@ export function Sidebar({
     <div className="sidebar">
       <div className="sidebar-header">
         <h3>Saved Stuff</h3>
+      </div>
+      <div className="sidebar-controls">
+        <div className="sidebar-toggle">
+          <button className={activeSaveScope === "local" ? "active" : ""} onClick={() => onSetSaveScope("local")} type="button">Local</button>
+          <button className={activeSaveScope === "global" ? "active" : ""} onClick={() => onSetSaveScope("global")} type="button">Global</button>
+        </div>
         <div className="sidebar-toggle">
           <button className={activeSidebarTab === "queries" ? "active" : ""} onClick={() => onSetSidebarTab("queries")} type="button">Queries</button>
           <button className={activeSidebarTab === "results" ? "active" : ""} onClick={() => onSetSidebarTab("results")} type="button">Results</button>

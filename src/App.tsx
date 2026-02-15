@@ -22,6 +22,8 @@ export default function App() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [allSavedQueries, setAllSavedQueries] = useState<Record<string, SavedQuery[]>>({});
   const [allSavedResults, setAllSavedResults] = useState<Record<string, SavedResult[]>>({});
+  const [globalSavedQueries, setGlobalSavedQueries] = useState<SavedQuery[]>([]);
+  const [globalSavedResults, setGlobalSavedResults] = useState<SavedResult[]>([]);
 
   const [queryText, setQueryText] = useState("SELECT * FROM system.tables LIMIT 10");
   const [records, setRecordsState] = useState<any[]>([]);
@@ -38,21 +40,28 @@ export default function App() {
   const [queryNameInModal, setQueryNameInModal] = useState("");
   const [showSaveResultModal, setShowSaveResultModal] = useState(false);
   const [resultNameInModal, setResultNameInModal] = useState("");
+  const [activeSaveScope, setActiveSaveScope] = useState<"local" | "global">("local");
   const [activeSidebarTab, setActiveSidebarTab] = useState<"queries" | "results">("queries");
 
   const activeConnection = useMemo(() => connections.find((connection) => connection.active) ?? null, [connections]);
-  const savedQueries = activeConnection ? allSavedQueries[activeConnection.id] || [] : [];
-  const savedResults = activeConnection ? allSavedResults[activeConnection.id] || [] : [];
+  const localSavedQueries = activeConnection ? allSavedQueries[activeConnection.id] || [] : [];
+  const localSavedResults = activeConnection ? allSavedResults[activeConnection.id] || [] : [];
+  const savedQueries = activeSaveScope === "global" ? globalSavedQueries : localSavedQueries;
+  const savedResults = activeSaveScope === "global" ? globalSavedResults : localSavedResults;
   const recordColumns = records.length > 0 ? Object.keys(records[0]) : [];
 
   const persistConnections = (next: Connection[]) => localStorage.setItem("connections", JSON.stringify(next));
   const persistQueries = (next: Record<string, SavedQuery[]>) => localStorage.setItem("savedQueries", JSON.stringify(next));
   const persistResults = (next: Record<string, SavedResult[]>) => localStorage.setItem("savedResults", JSON.stringify(next));
+  const persistGlobalQueries = (next: SavedQuery[]) => localStorage.setItem("globalSavedQueries", JSON.stringify(next));
+  const persistGlobalResults = (next: SavedResult[]) => localStorage.setItem("globalSavedResults", JSON.stringify(next));
 
   useEffect(() => {
     const storedConnections = localStorage.getItem("connections");
     const storedQueries = localStorage.getItem("savedQueries");
     const storedResults = localStorage.getItem("savedResults");
+    const storedGlobalQueries = localStorage.getItem("globalSavedQueries");
+    const storedGlobalResults = localStorage.getItem("globalSavedResults");
 
     let nextConnections: Connection[] = [];
     if (storedConnections) {
@@ -96,12 +105,30 @@ export default function App() {
       }
     }
 
+    const nextGlobalQueries: SavedQuery[] = storedGlobalQueries
+      ? JSON.parse(storedGlobalQueries).map((query: SavedQuery) => ({
+          ...query,
+          id: query.id || crypto.randomUUID(),
+        }))
+      : [];
+
+    const nextGlobalResults: SavedResult[] = storedGlobalResults
+      ? JSON.parse(storedGlobalResults).map((result: SavedResult) => ({
+          ...result,
+          id: result.id || crypto.randomUUID(),
+        }))
+      : [];
+
     setConnections(nextConnections);
     setAllSavedQueries(nextQueries);
     setAllSavedResults(nextResults);
+    setGlobalSavedQueries(nextGlobalQueries);
+    setGlobalSavedResults(nextGlobalResults);
     persistConnections(nextConnections);
     persistQueries(nextQueries);
     persistResults(nextResults);
+    persistGlobalQueries(nextGlobalQueries);
+    persistGlobalResults(nextGlobalResults);
   }, []);
 
   useEffect(() => {
@@ -280,9 +307,20 @@ export default function App() {
   };
 
   const saveQueryConfirmed = () => {
-    if (!queryNameInModal || !activeConnection) return;
+    if (!queryNameInModal) return;
 
     const newQuery: SavedQuery = { id: crypto.randomUUID(), name: queryNameInModal, query: queryText };
+
+    if (activeSaveScope === "global") {
+      const nextGlobalSavedQueries = [...globalSavedQueries, newQuery];
+      setGlobalSavedQueries(nextGlobalSavedQueries);
+      persistGlobalQueries(nextGlobalSavedQueries);
+      setShowSaveQueryModal(false);
+      return;
+    }
+
+    if (!activeConnection) return;
+
     const nextSavedQueries = { ...allSavedQueries };
     const currentQueries = nextSavedQueries[activeConnection.id] || [];
     nextSavedQueries[activeConnection.id] = [...currentQueries, newQuery];
@@ -293,6 +331,13 @@ export default function App() {
   };
 
   const deleteQuery = (queryToDelete: SavedQuery) => {
+    if (activeSaveScope === "global") {
+      const nextGlobalSavedQueries = globalSavedQueries.filter((query) => query.id !== queryToDelete.id);
+      setGlobalSavedQueries(nextGlobalSavedQueries);
+      persistGlobalQueries(nextGlobalSavedQueries);
+      return;
+    }
+
     if (!activeConnection) return;
 
     const nextSavedQueries = { ...allSavedQueries };
@@ -305,6 +350,15 @@ export default function App() {
   };
 
   const overwriteQuery = (queryToOverwrite: SavedQuery) => {
+    if (activeSaveScope === "global") {
+      const nextGlobalSavedQueries = globalSavedQueries.map((query) =>
+        query.id === queryToOverwrite.id ? { ...query, query: queryText } : query,
+      );
+      setGlobalSavedQueries(nextGlobalSavedQueries);
+      persistGlobalQueries(nextGlobalSavedQueries);
+      return;
+    }
+
     if (!activeConnection) return;
 
     const nextSavedQueries = { ...allSavedQueries };
@@ -322,7 +376,7 @@ export default function App() {
   };
 
   const saveResultConfirmed = () => {
-    if (!resultNameInModal || !activeConnection) return;
+    if (!resultNameInModal) return;
 
     const newResult: SavedResult = {
       id: crypto.randomUUID(),
@@ -330,6 +384,16 @@ export default function App() {
       records,
       query: queryText,
     };
+
+    if (activeSaveScope === "global") {
+      const nextGlobalSavedResults = [...globalSavedResults, newResult];
+      setGlobalSavedResults(nextGlobalSavedResults);
+      persistGlobalResults(nextGlobalSavedResults);
+      setShowSaveResultModal(false);
+      return;
+    }
+
+    if (!activeConnection) return;
 
     const nextSavedResults = { ...allSavedResults };
     const currentResults = nextSavedResults[activeConnection.id] || [];
@@ -341,6 +405,13 @@ export default function App() {
   };
 
   const deleteResult = (resultToDelete: SavedResult) => {
+    if (activeSaveScope === "global") {
+      const nextGlobalSavedResults = globalSavedResults.filter((result) => result.id !== resultToDelete.id);
+      setGlobalSavedResults(nextGlobalSavedResults);
+      persistGlobalResults(nextGlobalSavedResults);
+      return;
+    }
+
     if (!activeConnection) return;
 
     const nextSavedResults = { ...allSavedResults };
@@ -353,6 +424,15 @@ export default function App() {
   };
 
   const overwriteResult = (resultToOverwrite: SavedResult) => {
+    if (activeSaveScope === "global") {
+      const nextGlobalSavedResults = globalSavedResults.map((result) =>
+        result.id === resultToOverwrite.id ? { ...result, query: queryText, records } : result,
+      );
+      setGlobalSavedResults(nextGlobalSavedResults);
+      persistGlobalResults(nextGlobalSavedResults);
+      return;
+    }
+
     if (!activeConnection) return;
 
     const nextSavedResults = { ...allSavedResults };
@@ -387,6 +467,8 @@ export default function App() {
             connections,
             queries: allSavedQueries,
             results: allSavedResults,
+            globalQueries: globalSavedQueries,
+            globalResults: globalSavedResults,
           },
           null,
           2,
@@ -411,6 +493,8 @@ export default function App() {
       let nextConnections: Connection[] = [];
       let nextSavedQueries: Record<string, SavedQuery[]> = {};
       let nextSavedResults: Record<string, SavedResult[]> = {};
+      let nextGlobalQueries: SavedQuery[] = [];
+      let nextGlobalResults: SavedResult[] = [];
 
       if (importedData.connections && importedData.queries) {
         nextConnections = importedData.connections.map((connection: Connection) => ({
@@ -433,6 +517,20 @@ export default function App() {
             }));
           }
         }
+
+        if (importedData.globalQueries) {
+          nextGlobalQueries = importedData.globalQueries.map((query: SavedQuery) => ({
+            ...query,
+            id: query.id || crypto.randomUUID(),
+          }));
+        }
+
+        if (importedData.globalResults) {
+          nextGlobalResults = importedData.globalResults.map((result: SavedResult) => ({
+            ...result,
+            id: result.id || crypto.randomUUID(),
+          }));
+        }
       } else {
         nextConnections = importedData.map((connection: Connection) => ({
           ...connection,
@@ -447,15 +545,31 @@ export default function App() {
       setConnections(nextConnections);
       setAllSavedQueries(nextSavedQueries);
       setAllSavedResults(nextSavedResults);
+      setGlobalSavedQueries(nextGlobalQueries);
+      setGlobalSavedResults(nextGlobalResults);
       persistConnections(nextConnections);
       persistQueries(nextSavedQueries);
       persistResults(nextSavedResults);
+      persistGlobalQueries(nextGlobalQueries);
+      persistGlobalResults(nextGlobalResults);
     } catch (error) {
       console.error(error);
     }
   };
 
   const selectQuery = (query: SavedQuery) => {
+    if (activeSaveScope === "global") {
+      const nextGlobalSavedQueries = globalSavedQueries.map((savedQuery) => ({
+        ...savedQuery,
+        active: savedQuery.id === query.id,
+      }));
+      setGlobalSavedQueries(nextGlobalSavedQueries);
+      persistGlobalQueries(nextGlobalSavedQueries);
+      setQueryText(query.query);
+      editorRef.current?.setValue(query.query);
+      return;
+    }
+
     if (!activeConnection) return;
 
     const nextSavedQueries = { ...allSavedQueries };
@@ -471,6 +585,20 @@ export default function App() {
   };
 
   const selectResult = (result: SavedResult) => {
+    if (activeSaveScope === "global") {
+      const nextGlobalSavedResults = globalSavedResults.map((savedResult) => ({
+        ...savedResult,
+        active: savedResult.id === result.id,
+      }));
+      setGlobalSavedResults(nextGlobalSavedResults);
+      persistGlobalResults(nextGlobalSavedResults);
+      setRecordsState(result.records);
+      setQueryText(result.query);
+      setQueryError(null);
+      editorRef.current?.setValue(result.query);
+      return;
+    }
+
     if (!activeConnection) return;
 
     const nextSavedResults = { ...allSavedResults };
@@ -518,9 +646,11 @@ export default function App() {
 
       <div className="main-content">
         <Sidebar
+          activeSaveScope={activeSaveScope}
           activeSidebarTab={activeSidebarTab}
           savedQueries={savedQueries}
           savedResults={savedResults}
+          onSetSaveScope={setActiveSaveScope}
           onSetSidebarTab={setActiveSidebarTab}
           onSelectQuery={selectQuery}
           onSelectResult={selectResult}
