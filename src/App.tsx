@@ -304,6 +304,18 @@ export default function App() {
     persistQueries(nextSavedQueries);
   };
 
+  const overwriteQuery = (queryToOverwrite: SavedQuery) => {
+    if (!activeConnection) return;
+
+    const nextSavedQueries = { ...allSavedQueries };
+    nextSavedQueries[activeConnection.id] = (nextSavedQueries[activeConnection.id] || []).map((query) =>
+      query.id === queryToOverwrite.id ? { ...query, query: queryText } : query,
+    );
+
+    setAllSavedQueries(nextSavedQueries);
+    persistQueries(nextSavedQueries);
+  };
+
   const promptSaveResult = () => {
     setResultNameInModal("");
     setShowSaveResultModal(true);
@@ -334,6 +346,18 @@ export default function App() {
     const nextSavedResults = { ...allSavedResults };
     nextSavedResults[activeConnection.id] = (nextSavedResults[activeConnection.id] || []).filter(
       (result) => result.id !== resultToDelete.id,
+    );
+
+    setAllSavedResults(nextSavedResults);
+    persistResults(nextSavedResults);
+  };
+
+  const overwriteResult = (resultToOverwrite: SavedResult) => {
+    if (!activeConnection) return;
+
+    const nextSavedResults = { ...allSavedResults };
+    nextSavedResults[activeConnection.id] = (nextSavedResults[activeConnection.id] || []).map((result) =>
+      result.id === resultToOverwrite.id ? { ...result, query: queryText, records } : result,
     );
 
     setAllSavedResults(nextSavedResults);
@@ -502,6 +526,8 @@ export default function App() {
           onSelectResult={selectResult}
           onDeleteQuery={deleteQuery}
           onDeleteResult={deleteResult}
+          onOverwriteQuery={overwriteQuery}
+          onOverwriteResult={overwriteResult}
         />
 
         <DataView
