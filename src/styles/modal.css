@@ -121,6 +121,14 @@
   gap: 24px;
 }
 
+.modal-message {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #cbd5e1;
+  text-align: center;
+}
+
 .form-group {
   display: flex;
   flex-direction: column;
@@ -175,5 +183,16 @@
 
 .cancel-button:hover {
   background: rgba(239, 68, 68, 0.25);
+  transform: translateY(-1px);
+}
+
+.delete-button {
+  background: rgba(239, 68, 68, 0.85);
+  color: #fff;
+  border: 1px solid rgba(239, 68, 68, 0.95);
+}
+
+.delete-button:hover {
+  background: rgba(239, 68, 68, 1);
   transform: translateY(-1px);
 }
