@@ -18,6 +18,17 @@ type PendingDelete =
   | { type: "query"; item: SavedQuery; scope: "local" | "global" }
   | { type: "result"; item: SavedResult; scope: "local" | "global" };
 
+const reorderById = <T extends { id: string }>(items: T[], fromId: string, toId: string): T[] => {
+  const fromIndex = items.findIndex((item) => item.id === fromId);
+  const toIndex = items.findIndex((item) => item.id === toId);
+  if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return items;
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+};
+
 export default function App() {
   const recordsTableRef = useRef<HTMLDivElement | null>(null);
   const connectionNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -461,6 +472,71 @@ export default function App() {
     persistConnections(nextConnections);
   };
 
+  const reorderConnections = (fromId: string, toId: string) => {
+    setConnections((currentConnections) => {
+      const nextConnections = reorderById(currentConnections, fromId, toId);
+      if (nextConnections === currentConnections) return currentConnections;
+      persistConnections(nextConnections);
+      return nextConnections;
+    });
+  };
+
+  const reorderQueries = (fromId: string, toId: string) => {
+    if (activeSaveScope === "global") {
+      setGlobalSavedQueries((currentQueries) => {
+        const nextQueries = reorderById(currentQueries, fromId, toId);
+        if (nextQueries === currentQueries) return currentQueries;
+        persistGlobalQueries(nextQueries);
+        return nextQueries;
+      });
+      return;
+    }
+
+    if (!activeConnection) return;
+
+    setAllSavedQueries((currentSavedQueries) => {
+      const connectionId = activeConnection.id;
+      const connectionQueries = currentSavedQueries[connectionId] || [];
+      const nextConnectionQueries = reorderById(connectionQueries, fromId, toId);
+      if (nextConnectionQueries === connectionQueries) return currentSavedQueries;
+
+      const nextSavedQueries = {
+        ...currentSavedQueries,
+        [connectionId]: nextConnectionQueries,
+      };
+      persistQueries(nextSavedQueries);
+      return nextSavedQueries;
+    });
+  };
+
+  const reorderResults = (fromId: string, toId: string) => {
+    if (activeSaveScope === "global") {
+      setGlobalSavedResults((currentResults) => {
+        const nextResults = reorderById(currentResults, fromId, toId);
+        if (nextResults === currentResults) return currentResults;
+        persistGlobalResults(nextResults);
+        return nextResults;
+      });
+      return;
+    }
+
+    if (!activeConnection) return;
+
+    setAllSavedResults((currentSavedResults) => {
+      const connectionId = activeConnection.id;
+      const connectionResults = currentSavedResults[connectionId] || [];
+      const nextConnectionResults = reorderById(connectionResults, fromId, toId);
+      if (nextConnectionResults === connectionResults) return currentSavedResults;
+
+      const nextSavedResults = {
+        ...currentSavedResults,
+        [connectionId]: nextConnectionResults,
+      };
+      persistResults(nextSavedResults);
+      return nextSavedResults;
+    });
+  };
+
   const exportConnections = async () => {
     try {
       const filePath = await save({
@@ -699,6 +775,7 @@ export default function App() {
         onEditConnection={editConnection}
         onDeleteConnection={requestDeleteConnection}
         onSelectTab={selectTab}
+        onReorderConnections={reorderConnections}
         onImportConnections={importConnections}
         onExportConnections={exportConnections}
       />
@@ -717,6 +794,8 @@ export default function App() {
           onDeleteResult={requestDeleteResult}
           onOverwriteQuery={overwriteQuery}
           onOverwriteResult={overwriteResult}
+          onReorderQuery={reorderQueries}
+          onReorderResult={reorderResults}
         />
 
         <DataView

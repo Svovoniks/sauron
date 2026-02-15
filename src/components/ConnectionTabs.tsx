@@ -1,4 +1,4 @@
-import { useEffect, useRef, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
 import type { Connection } from "../types/app";
 
 interface ConnectionTabsProps {
@@ -7,6 +7,7 @@ interface ConnectionTabsProps {
   onEditConnection: (connection: Connection) => void;
   onDeleteConnection: (connection: Connection) => void;
   onSelectTab: (connection: Connection) => void;
+  onReorderConnections: (fromId: string, toId: string) => void;
   onImportConnections: () => void;
   onExportConnections: () => void;
 }
@@ -17,12 +18,14 @@ export function ConnectionTabs({
   onEditConnection,
   onDeleteConnection,
   onSelectTab,
+  onReorderConnections,
   onImportConnections,
   onExportConnections,
 }: ConnectionTabsProps) {
   const tabsContainerRef = useRef<HTMLDivElement | null>(null);
   const velocityRef = useRef(0);
   const animationFrameRef = useRef<number | null>(null);
+  const [draggingConnectionId, setDraggingConnectionId] = useState<string | null>(null);
 
   const isConnectionInvalid = (connection: Connection) => {
     return (
@@ -76,13 +79,47 @@ export function ConnectionTabs({
     };
   }, []);
 
+  useEffect(() => {
+    const handleMouseUp = () => setDraggingConnectionId(null);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  const startReorder = (event: MouseEvent<HTMLButtonElement>, connectionId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDraggingConnectionId(connectionId);
+  };
+
+  const handleReorderHover = (targetConnectionId: string) => {
+    if (!draggingConnectionId || draggingConnectionId === targetConnectionId) return;
+    onReorderConnections(draggingConnectionId, targetConnectionId);
+  };
+
   return (
     <div className="connection-tabs" onWheel={handleWheelScroll} ref={tabsContainerRef}>
       {connections.map((connection) => {
         const isInvalid = isConnectionInvalid(connection);
+        const isDragging = draggingConnectionId === connection.id;
         return (
-          <div className={`tab-container ${isInvalid ? "invalid" : ""}`} key={connection.id}>
+          <div
+            className={`tab-container ${isInvalid ? "invalid" : ""} ${isDragging ? "dragging" : ""}`}
+            key={connection.id}
+            onMouseEnter={() => handleReorderHover(connection.id)}
+            onMouseUp={() => setDraggingConnectionId(null)}
+          >
             <div className="tab-actions">
+              <button
+                aria-label="Reorder connection"
+                className={`drag-tab ${isDragging ? "active" : ""}`}
+                onMouseDown={(event) => startReorder(event, connection.id)}
+                title="Drag to reorder"
+                type="button"
+              >
+                <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
+                  <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
+                </svg>
+              </button>
               <button
                 aria-label="Edit connection"
                 className="edit-tab"

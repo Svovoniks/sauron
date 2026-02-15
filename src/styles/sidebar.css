@@ -129,6 +129,41 @@
   box-shadow: 0 4px 16px rgba(59, 130, 246, 0.2);
 }
 
+.query-item.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+.query-item.drop-target {
+  border-color: rgba(59, 130, 246, 0.85);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.drag-query {
+  background: rgba(100, 116, 139, 0.8);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.drag-query.active {
+  background: rgba(59, 130, 246, 0.85);
+  cursor: grabbing;
+}
+
+.drag-query:hover {
+  transform: scale(1.1);
+}
+
 .delete-query {
   background: rgba(239, 68, 68, 0.8);
   color: white;
