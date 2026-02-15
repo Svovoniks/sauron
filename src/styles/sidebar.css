@@ -14,9 +14,9 @@
 
 .sidebar-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .sidebar h3 {
@@ -24,6 +24,12 @@
   font-size: 18px;
   font-weight: 700;
   color: #f1f5f9;
+}
+
+.sidebar-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .sidebar-toggle {
