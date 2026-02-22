@@ -54,7 +54,9 @@ export function useSqlEditor(
       });
 
       editor.onDidChangeModelContent(() => setQueryText(editor.getValue()));
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => onExecuteQueryRef.current());
+      const executeQueryCommand = () => onExecuteQueryRef.current();
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, executeQueryCommand);
+      editor.addCommand(monaco.KeyMod.WinCtrl | monaco.KeyCode.Enter, executeQueryCommand);
       resizeObserver = new ResizeObserver(() => editor.layout());
       resizeObserver.observe(container);
       editorRef.current = editor;
