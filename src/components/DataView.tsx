@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 interface QueryOutput {
   title: string;
@@ -34,18 +34,91 @@ export function DataView({
   prettyPrintJson,
   getValueType,
 }: DataViewProps) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const isSearching = normalizedSearchQuery.length > 0;
+  const isDetailViewOpen = Boolean(selectedRecord);
+
+  const filteredRecords = useMemo(() => {
+    if (isDetailViewOpen || !isSearching) return records;
+
+    return records.filter((record) =>
+      Object.entries(record).some(([key, value]) => {
+        if (key.toLowerCase().includes(normalizedSearchQuery)) return true;
+        return prettyPrintJson(value).toLowerCase().includes(normalizedSearchQuery);
+      }),
+    );
+  }, [isDetailViewOpen, isSearching, normalizedSearchQuery, prettyPrintJson, records]);
+
+  const detailEntries = useMemo(() => {
+    if (!selectedRecord) return [];
+
+    const allEntries = Object.entries(selectedRecord);
+    if (!isSearching) return allEntries;
+
+    return allEntries.filter(([key, value]) => {
+      if (key.toLowerCase().includes(normalizedSearchQuery)) return true;
+      return prettyPrintJson(value).toLowerCase().includes(normalizedSearchQuery);
+    });
+  }, [isSearching, normalizedSearchQuery, prettyPrintJson, selectedRecord]);
+
+  const tableRows = isDetailViewOpen ? records : filteredRecords;
+  const displayedRecordCount = isDetailViewOpen ? records.length : filteredRecords.length;
+
+  useEffect(() => {
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
+
+      const target = event.target as HTMLElement | null;
+      const isTextInputTarget = Boolean(
+        target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
+      );
+
+      if (isTextInputTarget && target !== searchInputRef.current) return;
+
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, []);
+
   return (
     <div className="content-area">
       <div className="data-view">
         <div className={`table-section ${selectedRecord ? "with-detail" : ""}`}>
           <div className="table-header">
             <h3>Query Results</h3>
-            {records.length > 0 && (
-              <>
+            <div className="table-header-tools">
+              <div className="search-input-wrap">
+                <input
+                  aria-label={isDetailViewOpen ? "Search in record details" : "Search in query results"}
+                  className="results-search-input"
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && searchQuery) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSearchQuery("");
+                    }
+                  }}
+                  placeholder={isDetailViewOpen ? "Search in details..." : "Search in results..."}
+                  ref={searchInputRef}
+                  type="search"
+                  value={searchQuery}
+                />
+              </div>
+              {records.length > 0 && (
                 <button className="button save-button" onClick={onSaveResult} type="button">Save Results</button>
-                <span className="record-count">{records.length} records</span>
-              </>
-            )}
+              )}
+              {records.length > 0 && (
+                <span className="record-count">{displayedRecordCount} records</span>
+              )}
+            </div>
           </div>
 
           {isLoading ? (
@@ -79,8 +152,8 @@ export function DataView({
               <table>
                 <thead><tr>{records.length > 0 ? recordColumns.map((column) => <th key={column}>{column}</th>) : <th>No Data</th>}</tr></thead>
                 <tbody>
-                  {records.length > 0 ? (
-                    records.map((record, index) => (
+                  {tableRows.length > 0 ? (
+                    tableRows.map((record, index) => (
                       <tr className={`record-row ${selectedRecord === record ? "active" : ""}`} key={index} onClick={() => onSelectRecord(record)}>
                         {Object.values(record).map((value, valueIndex) => (
                           <td className="truncate" key={`${index}-${valueIndex}`} title={String(value)}>{String(value)}</td>
@@ -88,7 +161,13 @@ export function DataView({
                       </tr>
                     ))
                   ) : (
-                    <tr><td colSpan={100} className="no-data"><div className="empty-table"><p>No records found</p></div></td></tr>
+                    <tr>
+                      <td className="no-data" colSpan={100}>
+                        <div className="empty-table">
+                          <p>{isSearching && !isDetailViewOpen ? "No matching records found" : "No records found"}</p>
+                        </div>
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
@@ -103,7 +182,7 @@ export function DataView({
           </div>
           {selectedRecord ? (
             <div className="detail-content">
-              {Object.entries(selectedRecord).map(([key, value]) => {
+              {detailEntries.length > 0 ? detailEntries.map(([key, value]) => {
                 const valueType = getValueType(value);
                 return (
                   <div className="detail-item" key={key}>
@@ -143,7 +222,9 @@ export function DataView({
                     </div>
                   </div>
                 );
-              })}
+              }) : (
+                <div className="detail-placeholder"><p>No matching fields in this record</p></div>
+              )}
             </div>
           ) : (
             <div className="detail-placeholder"><p>Select a record to view details</p></div>
