@@ -57,4 +57,13 @@
   .host-port-group {
     grid-template-columns: 1fr;
   }
+
+  .table-header-tools {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .results-search-input {
+    width: 100%;
+  }
 }
