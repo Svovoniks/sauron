@@ -63,7 +63,14 @@
     justify-content: flex-start;
   }
 
-  .results-search-input {
-    width: 100%;
+  .floating-search {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+
+  .floating-search .results-search-input {
+    width: min(340px, calc(100vw - 96px));
   }
 }

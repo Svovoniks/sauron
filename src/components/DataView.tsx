@@ -34,11 +34,12 @@ export function DataView({
   prettyPrintJson,
   getValueType,
 }: DataViewProps) {
+  const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
-  const isSearching = normalizedSearchQuery.length > 0;
+  const isSearching = isSearchVisible && normalizedSearchQuery.length > 0;
   const isDetailViewOpen = Boolean(selectedRecord);
 
   const filteredRecords = useMemo(() => {
@@ -68,50 +69,73 @@ export function DataView({
   const displayedRecordCount = isDetailViewOpen ? records.length : filteredRecords.length;
 
   useEffect(() => {
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
-
-      const target = event.target as HTMLElement | null;
-      const isTextInputTarget = Boolean(
-        target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
-      );
-
-      if (isTextInputTarget && target !== searchInputRef.current) return;
-
-      event.preventDefault();
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
+    const openSearch = () => {
+      setIsSearchVisible(true);
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
     };
 
-    window.addEventListener("keydown", handleKeydown);
-    return () => window.removeEventListener("keydown", handleKeydown);
-  }, []);
+    const closeSearch = () => {
+      setSearchQuery("");
+      setIsSearchVisible(false);
+    };
+
+    const handleKeydown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        event.stopPropagation();
+        openSearch();
+        return;
+      }
+
+      if (!isSearchVisible || event.key !== "Escape") return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (searchQuery) {
+        setSearchQuery("");
+      } else {
+        closeSearch();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeydown, true);
+    return () => window.removeEventListener("keydown", handleKeydown, true);
+  }, [isSearchVisible, searchQuery]);
 
   return (
     <div className="content-area">
+      {isSearchVisible && (
+        <div className="floating-search">
+          <input
+            aria-label={isDetailViewOpen ? "Search in record details" : "Search in query results"}
+            className="results-search-input"
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={isDetailViewOpen ? "Search in details..." : "Search in results..."}
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+          />
+          <button
+            aria-label="Close search"
+            className="close-search-input"
+            onClick={() => {
+              setSearchQuery("");
+              setIsSearchVisible(false);
+            }}
+            type="button"
+          >
+            X
+          </button>
+        </div>
+      )}
       <div className="data-view">
         <div className={`table-section ${selectedRecord ? "with-detail" : ""}`}>
           <div className="table-header">
             <h3>Query Results</h3>
             <div className="table-header-tools">
-              <div className="search-input-wrap">
-                <input
-                  aria-label={isDetailViewOpen ? "Search in record details" : "Search in query results"}
-                  className="results-search-input"
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape" && searchQuery) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setSearchQuery("");
-                    }
-                  }}
-                  placeholder={isDetailViewOpen ? "Search in details..." : "Search in results..."}
-                  ref={searchInputRef}
-                  type="search"
-                  value={searchQuery}
-                />
-              </div>
               {records.length > 0 && (
                 <button className="button save-button" onClick={onSaveResult} type="button">Save Results</button>
               )}
