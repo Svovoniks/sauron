@@ -109,6 +109,12 @@ export function DataView({
     <div className="content-area">
       {isSearchVisible && (
         <div className="floating-search">
+          <div aria-hidden="true" className="search-input-icon">
+            <svg fill="none" viewBox="0 0 24 24">
+              <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2" />
+              <path d="m16 16 4 4" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+            </svg>
+          </div>
           <input
             aria-label={isDetailViewOpen ? "Search in record details" : "Search in query results"}
             className="results-search-input"
@@ -118,6 +124,9 @@ export function DataView({
             type="search"
             value={searchQuery}
           />
+          <span className="search-shortcut-hint" aria-hidden="true">
+            {navigator.userAgent.includes("Mac") ? "⌘F" : "Ctrl+F"}
+          </span>
           <button
             aria-label="Close search"
             className="close-search-input"
@@ -127,7 +136,9 @@ export function DataView({
             }}
             type="button"
           >
-            X
+            <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+              <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+            </svg>
           </button>
         </div>
       )}
