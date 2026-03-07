@@ -117,10 +117,14 @@ export function DataView({
           </div>
           <input
             aria-label={isDetailViewOpen ? "Search in record details" : "Search in query results"}
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect="off"
             className="results-search-input"
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder={isDetailViewOpen ? "Search in details..." : "Search in results..."}
             ref={searchInputRef}
+            spellCheck={false}
             type="search"
             value={searchQuery}
           />
