@@ -18,7 +18,6 @@ type PendingDelete =
   | { type: "connection"; item: Connection }
   | { type: "query"; item: SavedQuery; scope: "local" | "global" }
   | { type: "result"; item: SavedResult; scope: "local" | "global" };
-type QueryMode = "sql" | "slash";
 
 const reorderById = <T extends { id: string }>(items: T[], fromId: string, toId: string): T[] => {
   const fromIndex = items.findIndex((item) => item.id === fromId);
@@ -42,6 +41,8 @@ const parseStoredJson = <T,>(key: string, raw: string | null, fallback: T): T =>
   }
 };
 
+const isMetaCommandQuery = (query: string) => query.trimStart().startsWith("\\");
+
 export default function App() {
   const recordsTableRef = useRef<HTMLDivElement | null>(null);
   const connectionNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -62,7 +63,6 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [queryError, setQueryError] = useState<Error | null>(null);
   const [queryOutput, setQueryOutput] = useState<PostgresMetaOutput | null>(null);
-  const [queryMode, setQueryMode] = useState<QueryMode>("sql");
 
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
@@ -202,12 +202,6 @@ export default function App() {
     if (showSaveResultModal) resultNameInputRef.current?.focus();
   }, [showSaveResultModal]);
 
-  useEffect(() => {
-    if (activeConnection?.db_type !== "postgres") {
-      setQueryMode("sql");
-    }
-  }, [activeConnection]);
-
   const scrollToSelected = () => {
     requestAnimationFrame(() => {
       const selectedElement = recordsTableRef.current?.querySelector(".record-row.active");
@@ -247,7 +241,7 @@ export default function App() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
-    if (queryMode === "slash") {
+    if (isMetaCommandQuery(queryText)) {
       executePostgresMetaCommand(
         queryText,
         activeConnection,
@@ -901,12 +895,10 @@ export default function App() {
       <QuerySection
         editorContainerRef={editorContainerRef}
         isLoading={isLoading}
-        showModeSwitch={activeConnection?.db_type === "postgres"}
-        queryMode={queryMode}
+        isCommandQuery={isMetaCommandQuery(queryText)}
         onSaveQuery={promptSaveQuery}
         onAbortQuery={abortQuery}
         onExecuteQuery={executeQuery}
-        onQueryModeChange={setQueryMode}
       />
 
       <SaveNameModal
