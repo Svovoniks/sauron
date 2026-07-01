@@ -1,7 +1,14 @@
 import type { RefObject } from "react";
 
+interface CommandAvailability {
+  status: "checking" | "available" | "unavailable";
+  label: string;
+  detail: string;
+}
+
 interface QuerySectionProps {
   editorContainerRef: RefObject<HTMLDivElement>;
+  commandAvailability: CommandAvailability;
   isLoading: boolean;
   isCommandQuery: boolean;
   onSaveQuery: () => void;
@@ -11,6 +18,7 @@ interface QuerySectionProps {
 
 export function QuerySection({
   editorContainerRef,
+  commandAvailability,
   isLoading,
   isCommandQuery,
   onSaveQuery,
@@ -23,6 +31,16 @@ export function QuerySection({
         <div className="query-header">
           <div className="query-title-group">
             <span className="query-label">{isCommandQuery ? "\\# Command" : "SQL Query"}</span>
+            {isCommandQuery ? (
+              <span
+                aria-label={`${commandAvailability.label}: ${commandAvailability.detail}`}
+                className={`command-availability ${commandAvailability.status}`}
+                title={commandAvailability.detail}
+              >
+                <span className="command-availability-dot" aria-hidden="true"></span>
+                {commandAvailability.label}
+              </span>
+            ) : null}
           </div>
           <span className="query-hint">Ctrl+Enter to execute</span>
         </div>
