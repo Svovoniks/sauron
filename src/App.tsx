@@ -10,7 +10,12 @@ import { SaveNameModal } from "./components/SaveNameModal";
 import { Sidebar } from "./components/Sidebar";
 import { useSqlEditor } from "./hooks/useSqlEditor";
 import { setRecords } from "./lib/db/common";
-import { executePostgresMetaCommand, type PostgresMetaOutput } from "./lib/db/postgresMeta";
+import {
+  checkPsqlAvailability,
+  executePostgresMetaCommand,
+  type PostgresMetaOutput,
+  type PsqlAvailability,
+} from "./lib/db/postgresMeta";
 import { emptyConnection, type Connection, type SavedQuery, type SavedResult } from "./types/app";
 import { getValueType, prettyPrintJson } from "./utils/record";
 
@@ -18,6 +23,15 @@ type PendingDelete =
   | { type: "connection"; item: Connection }
   | { type: "query"; item: SavedQuery; scope: "local" | "global" }
   | { type: "result"; item: SavedResult; scope: "local" | "global" };
+type PsqlAvailabilityState =
+  | { status: "checking" }
+  | { status: "ready"; availability: PsqlAvailability }
+  | { status: "error"; error: string };
+type CommandAvailability = {
+  status: "checking" | "available" | "unavailable";
+  label: string;
+  detail: string;
+};
 
 const reorderById = <T extends { id: string }>(items: T[], fromId: string, toId: string): T[] => {
   const fromIndex = items.findIndex((item) => item.id === fromId);
@@ -63,6 +77,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [queryError, setQueryError] = useState<Error | null>(null);
   const [queryOutput, setQueryOutput] = useState<PostgresMetaOutput | null>(null);
+  const [psqlAvailability, setPsqlAvailability] = useState<PsqlAvailabilityState>({ status: "checking" });
 
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
@@ -83,6 +98,55 @@ export default function App() {
   const savedQueries = activeSaveScope === "global" ? globalSavedQueries : localSavedQueries;
   const savedResults = activeSaveScope === "global" ? globalSavedResults : localSavedResults;
   const recordColumns = records.length > 0 ? Object.keys(records[0]) : [];
+  const commandAvailability = useMemo<CommandAvailability>(() => {
+    if (!activeConnection) {
+      return {
+        status: "unavailable",
+        label: "Unavailable: no connection",
+        detail: "No active connection selected.",
+      };
+    }
+
+    if (activeConnection.db_type !== "postgres") {
+      return {
+        status: "unavailable",
+        label: "Unavailable: Postgres only",
+        detail: "Meta commands are available for Postgres connections only.",
+      };
+    }
+
+    if (psqlAvailability.status === "checking") {
+      return {
+        status: "checking",
+        label: "Checking psql",
+        detail: "Checking whether psql is installed.",
+      };
+    }
+
+    if (psqlAvailability.status === "error") {
+      return {
+        status: "unavailable",
+        label: "Unavailable: psql check failed",
+        detail: psqlAvailability.error,
+      };
+    }
+
+    if (psqlAvailability.availability.available) {
+      return {
+        status: "available",
+        label: "Commands available",
+        detail: psqlAvailability.availability.version ?? "psql is installed.",
+      };
+    }
+
+    return {
+      status: "unavailable",
+      label: psqlAvailability.availability.path
+        ? "Unavailable: psql check failed"
+        : "Unavailable: psql not installed",
+      detail: psqlAvailability.availability.error ?? "psql is not installed.",
+    };
+  }, [activeConnection, psqlAvailability]);
 
   const persistConnections = (next: Connection[]) => localStorage.setItem("connections", JSON.stringify(next));
   const persistQueries = (next: Record<string, SavedQuery[]>) => localStorage.setItem("savedQueries", JSON.stringify(next));
@@ -188,6 +252,28 @@ export default function App() {
     persistResults(nextResults);
     persistGlobalQueries(nextGlobalQueries);
     persistGlobalResults(nextGlobalResults);
+  }, []);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setPsqlAvailability({ status: "checking" });
+
+    checkPsqlAvailability()
+      .then((availability) => {
+        if (!isCurrent) return;
+        setPsqlAvailability({ status: "ready", availability });
+      })
+      .catch((error: unknown) => {
+        if (!isCurrent) return;
+        setPsqlAvailability({
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    return () => {
+      isCurrent = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -894,6 +980,7 @@ export default function App() {
 
       <QuerySection
         editorContainerRef={editorContainerRef}
+        commandAvailability={commandAvailability}
         isLoading={isLoading}
         isCommandQuery={isMetaCommandQuery(queryText)}
         onSaveQuery={promptSaveQuery}

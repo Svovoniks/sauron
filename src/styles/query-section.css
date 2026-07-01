@@ -27,6 +27,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .query-title-group {
@@ -34,6 +35,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .query-label {
@@ -51,6 +53,50 @@
   background: rgba(51, 65, 85, 0.6);
   padding: 4px 8px;
   border-radius: 6px;
+  white-space: nowrap;
+}
+
+.command-availability {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.55);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.command-availability-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+  flex-shrink: 0;
+}
+
+.command-availability.available {
+  color: #86efac;
+  border-color: rgba(134, 239, 172, 0.28);
+  background: rgba(22, 101, 52, 0.18);
+}
+
+.command-availability.checking {
+  color: #bfdbfe;
+  border-color: rgba(147, 197, 253, 0.28);
+  background: rgba(30, 64, 175, 0.18);
+}
+
+.command-availability.unavailable {
+  color: #fca5a5;
+  border-color: rgba(252, 165, 165, 0.28);
+  background: rgba(127, 29, 29, 0.18);
 }
 
 .query-editor {
