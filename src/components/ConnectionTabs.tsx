@@ -10,6 +10,7 @@ interface ConnectionTabsProps {
   onReorderConnections: (fromId: string, toId: string) => void;
   onImportConnections: () => void;
   onExportConnections: () => void;
+  onWindowDragStart: (event: MouseEvent<HTMLDivElement>) => void;
 }
 
 export function ConnectionTabs({
@@ -21,6 +22,7 @@ export function ConnectionTabs({
   onReorderConnections,
   onImportConnections,
   onExportConnections,
+  onWindowDragStart,
 }: ConnectionTabsProps) {
   const tabsContainerRef = useRef<HTMLDivElement | null>(null);
   const velocityRef = useRef(0);
@@ -97,7 +99,16 @@ export function ConnectionTabs({
   };
 
   return (
-    <div className="connection-tabs" onWheel={handleWheelScroll} ref={tabsContainerRef}>
+    <div
+      className="connection-tabs"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onWindowDragStart(event);
+        }
+      }}
+      onWheel={handleWheelScroll}
+      ref={tabsContainerRef}
+    >
       {connections.map((connection) => {
         const isInvalid = isConnectionInvalid(connection);
         const isDragging = draggingConnectionId === connection.id;

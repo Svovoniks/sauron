@@ -1,6 +1,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { ConnectionModal } from "./components/ConnectionModal";
 import { ConnectionTabs } from "./components/ConnectionTabs";
@@ -917,9 +918,19 @@ export default function App() {
   };
 
   const deleteModalText = getDeleteModalText();
+  const startWindowDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+
+    event.preventDefault();
+    getCurrentWindow().startDragging().catch((error) => {
+      console.warn("Failed to start window drag.", error);
+    });
+  };
 
   return (
     <div className="app-container">
+      <div className="window-drag-region" data-tauri-drag-region onMouseDown={startWindowDrag} />
+
       <ConnectionModal
         show={showConnectionModal}
         editingConnection={editingConnection}
@@ -942,6 +953,7 @@ export default function App() {
         onReorderConnections={reorderConnections}
         onImportConnections={importConnections}
         onExportConnections={exportConnections}
+        onWindowDragStart={startWindowDrag}
       />
 
       <div className="main-content">
