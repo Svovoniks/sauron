@@ -4,6 +4,10 @@
   box-sizing: border-box;
 }
 
+:root {
+  --titlebar-drag-height: 38px;
+}
+
 html,
 body {
   height: 100%;
@@ -20,9 +24,20 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: 10px;
+  padding: var(--titlebar-drag-height) 10px 10px;
   gap: 10px;
   background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+  position: relative;
+}
+
+.window-drag-region {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-drag-height);
+  user-select: none;
+  z-index: 1;
 }
 
 .main-content {
