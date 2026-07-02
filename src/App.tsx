@@ -134,7 +134,7 @@ export default function App() {
     if (psqlAvailability.availability.available) {
       return {
         status: "available",
-        label: "Commands available",
+        label: "ok",
         detail: psqlAvailability.availability.version ?? "psql is installed.",
       };
     }
