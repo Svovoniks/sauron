@@ -1,11 +1,12 @@
-use chrono::Utc;
 use serde::Serialize;
-use serde_json::Value;
 use std::io::ErrorKind;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
-use tokio_postgres::{types::Type, Client, NoTls, Row};
+use tokio_postgres::{
+    types::{Kind, Type},
+    Client, NoTls, SimpleQueryMessage,
+};
 
 #[derive(Serialize)]
 struct PsqlAvailability {
@@ -34,24 +35,6 @@ async fn setup_connection(connection_string: &str) -> Result<Client, tokio_postg
 use lazy_static::lazy_static;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tokio_postgres::types::{FromSql, Type as PgType};
-
-// Custom wrapper to accept any type as raw bytes and convert to string
-struct RawText(String);
-
-impl<'a> FromSql<'a> for RawText {
-    fn from_sql(
-        _ty: &PgType,
-        raw: &'a [u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
-        Ok(RawText(String::from_utf8_lossy(raw).to_string()))
-    }
-
-    fn accepts(_ty: &PgType) -> bool {
-        // Accept any type
-        true
-    }
-}
 
 lazy_static! {
     static ref CHANNEL: (mpsc::Sender<()>, Mutex<mpsc::Receiver<()>>) = {
@@ -59,6 +42,17 @@ lazy_static! {
         (sender, receiver.into())
     };
 }
+
+struct ResultColumn {
+    name: String,
+    value_type: String,
+    pg_type: Type,
+}
+
+#[derive(Serialize)]
+struct EncodedCell(String, String, String);
+
+type EncodedRows = Vec<Vec<EncodedCell>>;
 
 #[tauri::command]
 async fn cancel_query() {
@@ -68,7 +62,7 @@ async fn cancel_query() {
 async fn execute_statements_in_session(
     client: &Client,
     statements: &[String],
-) -> Result<Vec<Row>, String> {
+) -> Result<EncodedRows, String> {
     if statements.is_empty() {
         return Err("No SQL statements to execute".to_string());
     }
@@ -89,7 +83,17 @@ async fn execute_statements_in_session(
         .await
         .map_err(|e| e.to_string())?;
 
-    if prepared.columns().is_empty() {
+    let columns: Vec<ResultColumn> = prepared
+        .columns()
+        .iter()
+        .map(|column| ResultColumn {
+            name: column.name().to_string(),
+            value_type: ui_value_type(column.type_()).to_string(),
+            pg_type: column.type_().clone(),
+        })
+        .collect();
+
+    if columns.is_empty() {
         client
             .execute(&prepared, &[])
             .await
@@ -97,10 +101,33 @@ async fn execute_statements_in_session(
         return Ok(Vec::new());
     }
 
-    client
-        .query(&prepared, &[])
+    let messages = client
+        .simple_query(last_statement)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let mut rows = Vec::new();
+    for message in messages {
+        if let SimpleQueryMessage::Row(row) = message {
+            let mut row_data = Vec::new();
+            for (i, column) in columns.iter().enumerate() {
+                let value = row
+                    .try_get(i)
+                    .map_err(|e| e.to_string())?
+                    .map(|value| normalize_text_value(&column.pg_type, value))
+                    .unwrap_or_else(|| "<<null>>".to_string());
+
+                row_data.push(EncodedCell(
+                    column.name.clone(),
+                    column.value_type.clone(),
+                    value,
+                ));
+            }
+            rows.push(row_data);
+        }
+    }
+
+    Ok(rows)
 }
 
 #[tauri::command]
@@ -332,7 +359,7 @@ async fn execute_query_batch(
 
     let mut receiver = CHANNEL.1.lock().await;
 
-    let rows: Vec<Row>;
+    let rows: EncodedRows;
     tokio::select! {
         _ = receiver.recv() => {
             let _ = cancel_token.cancel_query(NoTls).await;
@@ -349,194 +376,41 @@ async fn execute_query_batch(
     rows_to_json(rows)
 }
 
-fn rows_to_json(rows: Vec<Row>) -> Result<String, String> {
-    let mut results = Vec::new();
-    for row in rows {
-        let mut row_data = Vec::new();
-        for (i, column) in row.columns().iter().enumerate() {
-            let (value, val_type) = match *column.type_() {
-                Type::BOOL => (
-                    row.get::<_, Option<bool>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "bool".to_string(),
-                ),
-                Type::BYTEA => (
-                    row.get::<_, Option<Vec<u8>>>(i)
-                        .map(|v| hex::encode(v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "string".to_string(),
-                ),
-                Type::CHAR => (
-                    row.get::<_, Option<i8>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "number".to_string(),
-                ),
-                Type::INT8 => (
-                    row.get::<_, Option<i64>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "number".to_string(),
-                ),
-                Type::INT2 => (
-                    row.get::<_, Option<i16>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "number".to_string(),
-                ),
-                Type::INT4 => (
-                    row.get::<_, Option<i32>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "number".to_string(),
-                ),
-                Type::TEXT_ARRAY => (
-                    row.get::<_, Option<Vec<Option<String>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::INT2_ARRAY => (
-                    row.get::<_, Option<Vec<Option<i16>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::INT4_ARRAY => (
-                    row.get::<_, Option<Vec<Option<i32>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::INT8_ARRAY => (
-                    row.get::<_, Option<Vec<Option<i64>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::FLOAT4_ARRAY => (
-                    row.get::<_, Option<Vec<Option<f32>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::FLOAT8_ARRAY => (
-                    row.get::<_, Option<Vec<Option<f64>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::BOOL_ARRAY => (
-                    row.get::<_, Option<Vec<Option<bool>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::TIMESTAMP_ARRAY => (
-                    row.get::<_, Option<Vec<Option<chrono::NaiveDateTime>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::TIMESTAMPTZ_ARRAY => (
-                    row.get::<_, Option<Vec<Option<chrono::DateTime<Utc>>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::DATE_ARRAY => (
-                    row.get::<_, Option<Vec<Option<chrono::NaiveDate>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::TIME_ARRAY => (
-                    row.get::<_, Option<Vec<Option<chrono::NaiveTime>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::UUID_ARRAY => (
-                    row.get::<_, Option<Vec<Option<uuid::Uuid>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::JSON_ARRAY | Type::JSONB_ARRAY => (
-                    row.get::<_, Option<Vec<Option<serde_json::Value>>>>(i)
-                        .map(|v| format!("{:?}", v))
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "array".to_string(),
-                ),
-                Type::JSON | Type::JSONB => (
-                    row.get::<_, Option<Value>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "string".to_string(),
-                ),
-                Type::FLOAT4 => (
-                    row.get::<_, Option<f32>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "number".to_string(),
-                ),
-                Type::FLOAT8 => (
-                    row.get::<_, Option<f64>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "number".to_string(),
-                ),
-                Type::TIMESTAMP => (
-                    row.get::<_, Option<chrono::NaiveDateTime>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "string".to_string(),
-                ),
-                Type::TIMESTAMPTZ => (
-                    row.get::<_, Option<chrono::DateTime<Utc>>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "string".to_string(),
-                ),
-                Type::DATE => (
-                    row.get::<_, Option<chrono::NaiveDate>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "string".to_string(),
-                ),
-                Type::TIME => (
-                    row.get::<_, Option<chrono::NaiveTime>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "string".to_string(),
-                ),
-                Type::UUID => (
-                    row.get::<_, Option<uuid::Uuid>>(i)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "<<null>>".to_string()),
-                    "string".to_string(),
-                ),
-                // Default case handles all other types including custom enums
-                _ => (
-                    match row.try_get::<_, Option<RawText>>(i) {
-                        Ok(Some(raw_text)) => raw_text.0,
-                        Ok(None) => "<<null>>".to_string(),
-                        Err(_) => "<<unsupported type>>".to_string(),
-                    },
-                    "string".to_string(),
-                ),
-            };
-            let mut value_array = Vec::new();
-            value_array.push(Value::String(column.name().to_string()));
-            value_array.push(Value::String(val_type));
-            value_array.push(Value::String(value));
-            row_data.push(value_array);
-        }
-        results.push(row_data);
+fn rows_to_json(rows: EncodedRows) -> Result<String, String> {
+    serde_json::to_string(&rows).map_err(|e| e.to_string())
+}
+
+fn ui_value_type(pg_type: &Type) -> &'static str {
+    match pg_type.kind() {
+        Kind::Array(_) => return "array",
+        Kind::Domain(inner) => return ui_value_type(inner),
+        _ => {}
     }
 
-    serde_json::to_string(&results).map_err(|e| e.to_string())
+    match *pg_type {
+        Type::BOOL => "bool",
+        Type::INT2 | Type::INT4 | Type::INT8 | Type::FLOAT4 | Type::FLOAT8 | Type::OID => "number",
+        Type::TIMESTAMP => "timestamp",
+        Type::TIMESTAMPTZ => "timestamp tz",
+        Type::JSONB | Type::JSON => "json",
+        _ => "string",
+    }
+}
+
+fn normalize_text_value(pg_type: &Type, value: &str) -> String {
+    if let Kind::Domain(inner) = pg_type.kind() {
+        return normalize_text_value(inner, value);
+    }
+
+    if *pg_type == Type::BOOL {
+        return match value {
+            "t" => "true".to_string(),
+            "f" => "false".to_string(),
+            _ => value.to_string(),
+        };
+    }
+
+    value.to_string()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
