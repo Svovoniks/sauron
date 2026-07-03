@@ -242,6 +242,28 @@ td {
   text-overflow: ellipsis;
 }
 
+.truncate.search-hidden-match {
+  text-overflow: clip;
+}
+
+.cell-clip {
+  display: inline;
+}
+
+.search-hidden-match .cell-clip {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.search-hidden-match .cell-text-content {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
 .search-match-highlight {
   display: inline;
   border-radius: 4px;
@@ -250,6 +272,18 @@ td {
   box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.28);
   color: #fed7aa;
   font-weight: 700;
+}
+
+.hidden-match-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 4px;
+  pointer-events: none;
+}
+
+.hidden-match-ellipsis .search-match-highlight {
+  line-height: 1.2;
 }
 
 .record-row {

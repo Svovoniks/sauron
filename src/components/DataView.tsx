@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 interface QueryOutput {
   title: string;
@@ -51,6 +51,69 @@ const renderHighlightedText = (text: string, searchTerm: string): ReactNode => {
 
   return segments;
 };
+
+interface SearchHighlightedCellProps {
+  searchTerm: string;
+  text: string;
+}
+
+function SearchHighlightedCell({ searchTerm, text }: SearchHighlightedCellProps) {
+  const cellRef = useRef<HTMLTableCellElement | null>(null);
+  const [isMatchHidden, setIsMatchHidden] = useState(false);
+
+  useLayoutEffect(() => {
+    const cell = cellRef.current;
+
+    if (!cell || !searchTerm || !text.toLowerCase().includes(searchTerm)) {
+      setIsMatchHidden(false);
+      return;
+    }
+
+    const measureMatchVisibility = () => {
+      const textContent = cell.querySelector<HTMLElement>(".cell-text-content");
+      const firstMatch = textContent?.querySelector<HTMLElement>(".search-match-highlight");
+      if (!textContent || !firstMatch) {
+        setIsMatchHidden(false);
+        return;
+      }
+
+      const cellRect = cell.getBoundingClientRect();
+      const textRect = textContent.getBoundingClientRect();
+      const matchRect = firstMatch.getBoundingClientRect();
+      const cellStyles = window.getComputedStyle(cell);
+      const leftPadding = Number.parseFloat(cellStyles.paddingLeft) || 0;
+      const rightPadding = Number.parseFloat(cellStyles.paddingRight) || 0;
+      const visibleLeft = Math.max(cellRect.left + leftPadding, textRect.left);
+      const visibleRight = Math.min(cellRect.right - rightPadding, textRect.right);
+      const isOverflowing = cell.scrollWidth > cell.clientWidth + 1 || textContent.scrollWidth > textContent.clientWidth + 1;
+
+      setIsMatchHidden(isOverflowing && (matchRect.left < visibleLeft || matchRect.right > visibleRight));
+    };
+
+    measureMatchVisibility();
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    const resizeObserver = new ResizeObserver(measureMatchVisibility);
+    resizeObserver.observe(cell);
+    resizeObserver.observe(cell.querySelector<HTMLElement>(".cell-text-content") ?? cell);
+
+    return () => resizeObserver.disconnect();
+  }, [isMatchHidden, searchTerm, text]);
+
+  return (
+    <td className={`truncate ${isMatchHidden ? "search-hidden-match" : ""}`} ref={cellRef} title={text}>
+      <span className="cell-clip">
+        <span className="cell-text-content">{renderHighlightedText(text, searchTerm)}</span>
+        {isMatchHidden && (
+          <span aria-hidden="true" className="hidden-match-ellipsis">
+            <span className="search-match-highlight">...</span>
+          </span>
+        )}
+      </span>
+    </td>
+  );
+}
 
 export function DataView({
   records,
@@ -236,14 +299,13 @@ export function DataView({
                   {tableRows.length > 0 ? (
                     tableRows.map((record, index) => (
                       <tr className={`record-row ${selectedRecord === record ? "active" : ""}`} key={index} onClick={() => onSelectRecord(record)}>
-                        {Object.values(record).map((value, valueIndex) => {
-                          const cellText = String(value);
-                          return (
-                            <td className="truncate" key={`${index}-${valueIndex}`} title={cellText}>
-                              {renderHighlightedText(cellText, normalizedSearchQuery)}
-                            </td>
-                          );
-                        })}
+                        {Object.values(record).map((value, valueIndex) => (
+                          <SearchHighlightedCell
+                            key={`${index}-${valueIndex}`}
+                            searchTerm={normalizedSearchQuery}
+                            text={String(value)}
+                          />
+                        ))}
                       </tr>
                     ))
                   ) : (
