@@ -242,6 +242,16 @@ td {
   text-overflow: ellipsis;
 }
 
+.search-match-highlight {
+  display: inline;
+  border-radius: 4px;
+  padding: 0 2px;
+  background: rgba(249, 115, 22, 0.35);
+  box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.28);
+  color: #fed7aa;
+  font-weight: 700;
+}
+
 .record-row {
   cursor: pointer;
   transition: all 0.3s ease;
