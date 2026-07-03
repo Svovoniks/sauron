@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 interface QueryOutput {
   title: string;
@@ -19,6 +19,38 @@ interface DataViewProps {
   prettyPrintJson: (value: any) => string;
   getValueType: (value: any) => string;
 }
+
+const renderHighlightedText = (text: string, searchTerm: string): ReactNode => {
+  if (!searchTerm) return text;
+
+  const normalizedText = text.toLowerCase();
+  const normalizedTerm = searchTerm.toLowerCase();
+  const segments: ReactNode[] = [];
+  let currentIndex = 0;
+  let matchIndex = normalizedText.indexOf(normalizedTerm);
+
+  while (matchIndex !== -1) {
+    if (matchIndex > currentIndex) {
+      segments.push(text.slice(currentIndex, matchIndex));
+    }
+
+    const matchEnd = matchIndex + normalizedTerm.length;
+    segments.push(
+      <mark className="search-match-highlight" key={`${matchIndex}-${matchEnd}`}>
+        {text.slice(matchIndex, matchEnd)}
+      </mark>,
+    );
+
+    currentIndex = matchEnd;
+    matchIndex = normalizedText.indexOf(normalizedTerm, currentIndex);
+  }
+
+  if (currentIndex < text.length) {
+    segments.push(text.slice(currentIndex));
+  }
+
+  return segments;
+};
 
 export function DataView({
   records,
@@ -189,14 +221,29 @@ export function DataView({
           ) : (
             <div className="records-table" ref={recordsTableRef}>
               <table>
-                <thead><tr>{records.length > 0 ? recordColumns.map((column) => <th key={column}>{column}</th>) : <th>No Data</th>}</tr></thead>
+                <thead>
+                  <tr>
+                    {records.length > 0 ? (
+                      recordColumns.map((column) => (
+                        <th key={column}>{renderHighlightedText(column, normalizedSearchQuery)}</th>
+                      ))
+                    ) : (
+                      <th>No Data</th>
+                    )}
+                  </tr>
+                </thead>
                 <tbody>
                   {tableRows.length > 0 ? (
                     tableRows.map((record, index) => (
                       <tr className={`record-row ${selectedRecord === record ? "active" : ""}`} key={index} onClick={() => onSelectRecord(record)}>
-                        {Object.values(record).map((value, valueIndex) => (
-                          <td className="truncate" key={`${index}-${valueIndex}`} title={String(value)}>{String(value)}</td>
-                        ))}
+                        {Object.values(record).map((value, valueIndex) => {
+                          const cellText = String(value);
+                          return (
+                            <td className="truncate" key={`${index}-${valueIndex}`} title={cellText}>
+                              {renderHighlightedText(cellText, normalizedSearchQuery)}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))
                   ) : (
@@ -223,11 +270,13 @@ export function DataView({
             <div className="detail-content">
               {detailEntries.length > 0 ? detailEntries.map(([key, value]) => {
                 const valueType = getValueType(value);
+                const valueText = prettyPrintJson(value);
+
                 return (
                   <div className="detail-item" key={key}>
-                    <div className="detail-key"><span className="key-name">{key}</span><span className={`key-type ${valueType}`}>{valueType}</span></div>
+                    <div className="detail-key"><span className="key-name">{renderHighlightedText(key, normalizedSearchQuery)}</span><span className={`key-type ${valueType}`}>{valueType}</span></div>
                     <div className="value-container">
-                      <pre className={`value-content ${valueType}`}>{prettyPrintJson(value)}</pre>
+                      <pre className={`value-content ${valueType}`}>{renderHighlightedText(valueText, normalizedSearchQuery)}</pre>
                       <button
                         aria-label="Copy value"
                         className="copy-button"
