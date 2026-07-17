@@ -1,6 +1,6 @@
 [package]
 name = "sauron"
-version = "0.1.0"
+version = "0.2.1"
 description = "database query app"
 authors = ["svovoniks"]
 edition = "2021"
