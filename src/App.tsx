@@ -1,7 +1,16 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { ConnectionModal } from "./components/ConnectionModal";
 import { ConnectionTabs } from "./components/ConnectionTabs";
@@ -58,13 +67,36 @@ const parseStoredJson = <T,>(key: string, raw: string | null, fallback: T): T =>
 
 const isMetaCommandQuery = (query: string) => query.trimStart().startsWith("\\");
 
+const DEFAULT_SIDEBAR_WIDTH = 350;
+const DEFAULT_QUERY_HEIGHT = 185;
+const MIN_SIDEBAR_WIDTH = 220;
+const MIN_RESULTS_WIDTH = 320;
+const MIN_MAIN_HEIGHT = 160;
+const MIN_QUERY_HEIGHT = 150;
+const LAYOUT_GAP = 10;
+
+const clamp = (value: number, minimum: number, maximum: number) =>
+  Math.min(Math.max(value, minimum), maximum);
+
 export default function App() {
+  const appContainerRef = useRef<HTMLDivElement | null>(null);
+  const mainContentRef = useRef<HTMLDivElement | null>(null);
   const recordsTableRef = useRef<HTMLDivElement | null>(null);
   const connectionNameInputRef = useRef<HTMLInputElement | null>(null);
   const queryNameInputRef = useRef<HTMLInputElement | null>(null);
   const resultNameInputRef = useRef<HTMLInputElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isExecutingQueryRef = useRef(false);
+  const layoutResizeRef = useRef<{
+    axis: "both" | "x" | "y";
+    pointerId: number;
+    startX: number;
+    startY: number;
+    sidebarWidth: number;
+    queryHeight: number;
+    maximumSidebarWidth: number;
+    maximumQueryHeight: number;
+  } | null>(null);
 
   const [connections, setConnections] = useState<Connection[]>([]);
   const [allSavedQueries, setAllSavedQueries] = useState<Record<string, SavedQuery[]>>({});
@@ -92,6 +124,9 @@ export default function App() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [activeSaveScope, setActiveSaveScope] = useState<"local" | "global">("local");
   const [activeSidebarTab, setActiveSidebarTab] = useState<"queries" | "results">("queries");
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [queryHeight, setQueryHeight] = useState(DEFAULT_QUERY_HEIGHT);
+  const [layoutResizeAxis, setLayoutResizeAxis] = useState<"both" | "x" | "y" | null>(null);
 
   const activeConnection = useMemo(() => connections.find((connection) => connection.active) ?? null, [connections]);
   const localSavedQueries = activeConnection ? allSavedQueries[activeConnection.id] || [] : [];
@@ -927,8 +962,107 @@ export default function App() {
     });
   };
 
+  const startLayoutResize = (event: ReactPointerEvent<HTMLElement>, axis: "both" | "x" | "y") => {
+    if (event.button !== 0 || !mainContentRef.current || !appContainerRef.current) return;
+
+    const sidebar = mainContentRef.current.querySelector<HTMLElement>(".sidebar");
+    const querySection = appContainerRef.current.querySelector<HTMLElement>(".query-section");
+    if (!sidebar || !querySection) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const mainWidth = mainContentRef.current.getBoundingClientRect().width;
+    const sharedVerticalSpace =
+      mainContentRef.current.getBoundingClientRect().height + LAYOUT_GAP + querySection.getBoundingClientRect().height;
+
+    layoutResizeRef.current = {
+      axis,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      sidebarWidth: sidebar.getBoundingClientRect().width,
+      queryHeight: querySection.getBoundingClientRect().height,
+      maximumSidebarWidth: Math.max(MIN_SIDEBAR_WIDTH, mainWidth - LAYOUT_GAP - MIN_RESULTS_WIDTH),
+      maximumQueryHeight: Math.max(MIN_QUERY_HEIGHT, sharedVerticalSpace - LAYOUT_GAP - MIN_MAIN_HEIGHT),
+    };
+    setLayoutResizeAxis(axis);
+  };
+
+  const resizeLayout = (event: ReactPointerEvent<HTMLElement>) => {
+    const resize = layoutResizeRef.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+
+    if (resize.axis !== "y") {
+      setSidebarWidth(
+        clamp(resize.sidebarWidth + event.clientX - resize.startX, MIN_SIDEBAR_WIDTH, resize.maximumSidebarWidth),
+      );
+    }
+    if (resize.axis !== "x") {
+      setQueryHeight(
+        clamp(resize.queryHeight - (event.clientY - resize.startY), MIN_QUERY_HEIGHT, resize.maximumQueryHeight),
+      );
+    }
+  };
+
+  const stopLayoutResize = (event: ReactPointerEvent<HTMLElement>) => {
+    if (layoutResizeRef.current?.pointerId !== event.pointerId) return;
+
+    layoutResizeRef.current = null;
+    setLayoutResizeAxis(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const resizeLayoutWithKeyboard = (
+    event: ReactKeyboardEvent<HTMLElement>,
+    axis: "both" | "x" | "y" = "both",
+  ) => {
+    const increment = event.shiftKey ? 24 : 8;
+
+    if (event.key === "ArrowLeft" && axis !== "y") {
+      event.preventDefault();
+      setSidebarWidth((width) => Math.max(MIN_SIDEBAR_WIDTH, width - increment));
+    } else if (event.key === "ArrowRight" && axis !== "y") {
+      event.preventDefault();
+      const mainWidth = mainContentRef.current?.getBoundingClientRect().width ?? Number.POSITIVE_INFINITY;
+      setSidebarWidth((width) => Math.min(mainWidth - LAYOUT_GAP - MIN_RESULTS_WIDTH, width + increment));
+    } else if (event.key === "ArrowUp" && axis !== "x") {
+      event.preventDefault();
+      const querySection = appContainerRef.current?.querySelector<HTMLElement>(".query-section");
+      const mainHeight = mainContentRef.current?.getBoundingClientRect().height;
+      const maximumQueryHeight =
+        querySection && mainHeight !== undefined
+          ? Math.max(
+              MIN_QUERY_HEIGHT,
+              mainHeight + querySection.getBoundingClientRect().height - MIN_MAIN_HEIGHT,
+            )
+          : Number.POSITIVE_INFINITY;
+      setQueryHeight((height) => Math.min(maximumQueryHeight, height + increment));
+    } else if (event.key === "ArrowDown" && axis !== "x") {
+      event.preventDefault();
+      setQueryHeight((height) => Math.max(MIN_QUERY_HEIGHT, height - increment));
+    }
+  };
+
+  const resetLayoutSize = () => {
+    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+    setQueryHeight(DEFAULT_QUERY_HEIGHT);
+  };
+
+  const layoutStyle = {
+    "--sidebar-width": `${sidebarWidth}px`,
+    "--query-section-height": `${queryHeight}px`,
+  } as CSSProperties;
+
   return (
-    <div className="app-container">
+    <div
+      className={`app-container ${layoutResizeAxis ? `resizing-layout resizing-layout-${layoutResizeAxis}` : ""}`}
+      ref={appContainerRef}
+      style={layoutStyle}
+    >
       <div className="window-drag-region" data-tauri-drag-region onMouseDown={startWindowDrag} />
 
       <ConnectionModal
@@ -956,49 +1090,92 @@ export default function App() {
         onWindowDragStart={startWindowDrag}
       />
 
-      <div className="main-content">
-        <Sidebar
-          activeSaveScope={activeSaveScope}
-          activeSidebarTab={activeSidebarTab}
-          savedQueries={savedQueries}
-          savedResults={savedResults}
-          onSetSaveScope={setActiveSaveScope}
-          onSetSidebarTab={setActiveSidebarTab}
-          onSelectQuery={selectQuery}
-          onSelectResult={selectResult}
-          onDeleteQuery={requestDeleteQuery}
-          onDeleteResult={requestDeleteResult}
-          onOverwriteQuery={overwriteQuery}
-          onOverwriteResult={overwriteResult}
-          onReorderQuery={reorderQueries}
-          onReorderResult={reorderResults}
+      <div className="workspace-layout">
+        <div className="main-content" ref={mainContentRef}>
+          <Sidebar
+            activeSaveScope={activeSaveScope}
+            activeSidebarTab={activeSidebarTab}
+            savedQueries={savedQueries}
+            savedResults={savedResults}
+            onSetSaveScope={setActiveSaveScope}
+            onSetSidebarTab={setActiveSidebarTab}
+            onSelectQuery={selectQuery}
+            onSelectResult={selectResult}
+            onDeleteQuery={requestDeleteQuery}
+            onDeleteResult={requestDeleteResult}
+            onOverwriteQuery={overwriteQuery}
+            onOverwriteResult={overwriteResult}
+            onReorderQuery={reorderQueries}
+            onReorderResult={reorderResults}
+          />
+
+          <div
+            aria-label="Resize Saved Stuff and Query Results panels"
+            aria-orientation="vertical"
+            className="layout-resize-gutter"
+            onKeyDown={(event) => {
+              if (event.target === event.currentTarget) resizeLayoutWithKeyboard(event, "x");
+            }}
+            onPointerCancel={stopLayoutResize}
+            onPointerDown={(event) => startLayoutResize(event, "x")}
+            onPointerMove={resizeLayout}
+            onPointerUp={stopLayoutResize}
+            role="separator"
+            tabIndex={0}
+          >
+            <button
+              aria-label="Resize Saved Stuff, Query Results, and SQL Query panels"
+              className="layout-resize-handle"
+              onDoubleClick={resetLayoutSize}
+              onKeyDown={(event) => resizeLayoutWithKeyboard(event, "both")}
+              onPointerCancel={stopLayoutResize}
+              onPointerDown={(event) => startLayoutResize(event, "both")}
+              onPointerMove={resizeLayout}
+              onPointerUp={stopLayoutResize}
+              title="Drag to resize all three panels. Double-click to reset."
+              type="button"
+            />
+          </div>
+
+          <DataView
+            records={records}
+            recordColumns={recordColumns}
+            selectedRecord={selectedRecord}
+            isLoading={isLoading}
+            queryError={queryError}
+            queryOutput={queryOutput}
+            recordsTableRef={recordsTableRef}
+            onSelectRecord={selectRecord}
+            onSaveResult={promptSaveResult}
+            onCloseDetail={() => setSelectedRecord(null)}
+            prettyPrintJson={prettyPrintJson}
+            getValueType={getValueType}
+          />
+        </div>
+
+        <div
+          aria-label="Resize upper panels and SQL Query panel"
+          aria-orientation="horizontal"
+          className="layout-horizontal-resize-gutter"
+          onKeyDown={(event) => resizeLayoutWithKeyboard(event, "y")}
+          onPointerCancel={stopLayoutResize}
+          onPointerDown={(event) => startLayoutResize(event, "y")}
+          onPointerMove={resizeLayout}
+          onPointerUp={stopLayoutResize}
+          role="separator"
+          tabIndex={0}
         />
 
-        <DataView
-          records={records}
-          recordColumns={recordColumns}
-          selectedRecord={selectedRecord}
+        <QuerySection
+          editorContainerRef={editorContainerRef}
+          commandAvailability={commandAvailability}
           isLoading={isLoading}
-          queryError={queryError}
-          queryOutput={queryOutput}
-          recordsTableRef={recordsTableRef}
-          onSelectRecord={selectRecord}
-          onSaveResult={promptSaveResult}
-          onCloseDetail={() => setSelectedRecord(null)}
-          prettyPrintJson={prettyPrintJson}
-          getValueType={getValueType}
+          isCommandQuery={isMetaCommandQuery(queryText)}
+          onSaveQuery={promptSaveQuery}
+          onAbortQuery={abortQuery}
+          onExecuteQuery={executeQuery}
         />
       </div>
-
-      <QuerySection
-        editorContainerRef={editorContainerRef}
-        commandAvailability={commandAvailability}
-        isLoading={isLoading}
-        isCommandQuery={isMetaCommandQuery(queryText)}
-        onSaveQuery={promptSaveQuery}
-        onAbortQuery={abortQuery}
-        onExecuteQuery={executeQuery}
-      />
 
       <SaveNameModal
         show={showSaveQueryModal}
