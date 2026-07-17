@@ -189,16 +189,12 @@ export function DataView({
 
       event.preventDefault();
       event.stopPropagation();
-      if (searchQuery) {
-        setSearchQuery("");
-      } else {
-        closeSearch();
-      }
+      closeSearch();
     };
 
     window.addEventListener("keydown", handleKeydown, true);
     return () => window.removeEventListener("keydown", handleKeydown, true);
-  }, [isSearchVisible, searchQuery]);
+  }, [isSearchVisible]);
 
   return (
     <div className="content-area">
@@ -333,6 +329,7 @@ export function DataView({
               {detailEntries.length > 0 ? detailEntries.map(([key, value]) => {
                 const valueType = getValueType(value);
                 const valueText = prettyPrintJson(value);
+                const copyText = valueType === "json" ? valueText : String(value);
 
                 return (
                   <div className="detail-item" key={key}>
@@ -342,7 +339,7 @@ export function DataView({
                       <button
                         aria-label="Copy value"
                         className="copy-button"
-                        onClick={() => navigator.clipboard.writeText(String(value))}
+                        onClick={() => navigator.clipboard.writeText(copyText)}
                         title="Copy value"
                         type="button"
                       >

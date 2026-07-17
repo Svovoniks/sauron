@@ -3,13 +3,13 @@
   gap: 20px;
   align-items: stretch;
   flex-shrink: 0;
-  min-height: 185px;
+  height: var(--query-section-height, 185px);
+  min-height: 150px;
   background: linear-gradient(135deg, rgba(26, 26, 46, 0.9), rgba(22, 33, 62, 0.9));
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 16px;
   padding: 10px;
   backdrop-filter: blur(10px);
-  resize: vertical;
   overflow: auto;
   scrollbar-width: none;
 }

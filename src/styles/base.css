@@ -6,6 +6,9 @@
 
 :root {
   --titlebar-drag-height: 38px;
+  --layout-gap: 10px;
+  --app-inline-padding: 10px;
+  --app-bottom-padding: 10px;
 }
 
 html,
@@ -24,8 +27,8 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: var(--titlebar-drag-height) 10px 10px;
-  gap: 10px;
+  padding: var(--titlebar-drag-height) var(--app-inline-padding) var(--app-bottom-padding);
+  gap: var(--layout-gap);
   background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
   position: relative;
 }
@@ -42,7 +45,98 @@ body {
 
 .main-content {
   display: flex;
-  gap: 10px;
+  gap: 0;
+  flex: 1;
+  min-height: 160px;
+}
+
+.workspace-layout {
+  display: flex;
   flex: 1;
   min-height: 0;
+  flex-direction: column;
+}
+
+.layout-resize-gutter {
+  position: relative;
+  width: var(--layout-gap);
+  flex: 0 0 var(--layout-gap);
+  min-height: 0;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.layout-horizontal-resize-gutter {
+  position: relative;
+  z-index: 20;
+  width: 100%;
+  height: var(--layout-gap);
+  flex: 0 0 var(--layout-gap);
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.layout-resize-handle {
+  position: absolute;
+  left: 50%;
+  /* Center of the open area formed by the two rounded upper corners
+     and the lower panel edge. */
+  bottom: 0;
+  z-index: 50;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  transform: translate(-50%, 50%);
+  background: transparent;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.layout-resize-handle::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: #64748b;
+  border: 1px solid rgba(148, 163, 184, 0.75);
+  box-shadow:
+    0 0 0 2px rgba(100, 116, 139, 0.12),
+    0 0 4px rgba(15, 23, 42, 0.55);
+  transition: inset 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.layout-resize-handle:hover::before,
+.layout-resize-handle:focus-visible::before,
+.resizing-layout .layout-resize-handle::before {
+  inset: 5px;
+  background: #94a3b8;
+  box-shadow:
+    0 0 0 3px rgba(100, 116, 139, 0.16),
+    0 0 5px rgba(15, 23, 42, 0.65);
+}
+
+.layout-resize-handle:focus-visible {
+  outline: none;
+}
+
+.resizing-layout-both,
+.resizing-layout-both * {
+  cursor: nwse-resize !important;
+  user-select: none !important;
+}
+
+.resizing-layout-x,
+.resizing-layout-x * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.resizing-layout-y,
+.resizing-layout-y * {
+  cursor: row-resize !important;
+  user-select: none !important;
 }

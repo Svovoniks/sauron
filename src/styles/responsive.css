@@ -1,7 +1,13 @@
 @media (max-width: 1024px) {
+  .layout-resize-gutter,
+  .layout-horizontal-resize-gutter {
+    display: none;
+  }
+
   .main-content {
     flex-direction: column;
     gap: 16px;
+    min-height: 0;
   }
 
   .sidebar {
@@ -11,6 +17,10 @@
 
   .content-area {
     width: 100%;
+  }
+
+  .query-section {
+    height: auto;
   }
 
   .data-view {
