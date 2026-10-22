@@ -1,431 +1,134 @@
-use serde::Serialize;
-use std::io::ErrorKind;
-use std::process::Stdio;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
-use tokio_postgres::{
-    types::{Kind, Type},
-    Client, NoTls, SimpleQueryMessage,
-};
+mod cancel;
+mod clickhouse;
+mod meta;
+mod model;
+mod postgres;
+mod psql;
+mod psql_format;
+mod secrets;
+mod storage;
 
-#[derive(Serialize)]
-struct PsqlAvailability {
-    available: bool,
-    path: Option<String>,
-    version: Option<String>,
-    error: Option<String>,
-}
+use cancel::Registry;
+use model::{ConnectionParams, DbType, QueryResult};
+use tauri::{AppHandle, State};
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-async fn setup_connection(connection_string: &str) -> Result<Client, tokio_postgres::Error> {
-    let (client, connection) = tokio_postgres::connect(connection_string, NoTls).await?;
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
-    Ok(client)
-}
-
-use lazy_static::lazy_static;
-use tokio::sync::mpsc;
-use tokio::sync::Mutex;
-
-lazy_static! {
-    static ref CHANNEL: (mpsc::Sender<()>, Mutex<mpsc::Receiver<()>>) = {
-        let (sender, receiver) = mpsc::channel(1);
-        (sender, receiver.into())
-    };
-}
-
-struct ResultColumn {
-    name: String,
-    value_type: String,
-    pg_type: Type,
-}
-
-#[derive(Serialize)]
-struct EncodedCell(String, String, String);
-
-type EncodedRows = Vec<Vec<EncodedCell>>;
+const MAX_ROW_LIMIT: usize = 1_000_000;
 
 #[tauri::command]
-async fn cancel_query() {
-    let _ = CHANNEL.0.send(()).await;
-}
-
-async fn execute_statements_in_session(
-    client: &Client,
-    statements: &[String],
-) -> Result<EncodedRows, String> {
-    if statements.is_empty() {
-        return Err("No SQL statements to execute".to_string());
-    }
-
-    for statement in statements.iter().take(statements.len().saturating_sub(1)) {
-        client
-            .simple_query(statement)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-
-    let last_statement = statements
-        .last()
-        .ok_or_else(|| "No SQL statements to execute".to_string())?;
-
-    let prepared = client
-        .prepare(last_statement)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let columns: Vec<ResultColumn> = prepared
-        .columns()
-        .iter()
-        .map(|column| ResultColumn {
-            name: column.name().to_string(),
-            value_type: ui_value_type(column.type_()).to_string(),
-            pg_type: column.type_().clone(),
-        })
-        .collect();
-
-    if columns.is_empty() {
-        client
-            .execute(&prepared, &[])
-            .await
-            .map_err(|e| e.to_string())?;
-        return Ok(Vec::new());
-    }
-
-    let messages = client
-        .simple_query(last_statement)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut rows = Vec::new();
-    for message in messages {
-        if let SimpleQueryMessage::Row(row) = message {
-            let mut row_data = Vec::new();
-            for (i, column) in columns.iter().enumerate() {
-                let value = row
-                    .try_get(i)
-                    .map_err(|e| e.to_string())?
-                    .map(|value| normalize_text_value(&column.pg_type, value))
-                    .unwrap_or_else(|| "<<null>>".to_string());
-
-                row_data.push(EncodedCell(
-                    column.name.clone(),
-                    column.value_type.clone(),
-                    value,
-                ));
-            }
-            rows.push(row_data);
-        }
-    }
-
-    Ok(rows)
-}
-
-#[tauri::command]
-async fn execute_query(connection_string: &str, query: &str) -> Result<String, String> {
-    execute_query_batch(connection_string, vec![query.to_string()]).await
-}
-
-fn psql_candidates() -> Vec<&'static str> {
-    let mut candidates = vec!["psql"];
-
-    #[cfg(target_os = "macos")]
-    {
-        candidates.push("/opt/homebrew/bin/psql");
-        candidates.push("/usr/local/bin/psql");
-        candidates.push("/Applications/Postgres.app/Contents/Versions/latest/bin/psql");
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        candidates.push("psql.exe");
-    }
-
-    candidates
-}
-
-async fn check_psql_candidate(psql_path: &str) -> Result<PsqlAvailability, String> {
-    let output = Command::new(psql_path)
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|error| {
-            if error.kind() == ErrorKind::NotFound {
-                format!("psql binary not found at {}", psql_path)
-            } else {
-                format!("Failed to start psql: {}", error)
-            }
-        })?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-
-    if output.status.success() {
-        return Ok(PsqlAvailability {
-            available: true,
-            path: Some(psql_path.to_string()),
-            version: if stdout.is_empty() {
-                None
-            } else {
-                Some(stdout)
-            },
-            error: None,
-        });
-    }
-
-    Err(if stderr.is_empty() {
-        format!("psql --version exited with status {}", output.status)
-    } else {
-        stderr
-    })
-}
-
-#[tauri::command]
-async fn check_psql_availability() -> Result<PsqlAvailability, String> {
-    let mut not_found_errors = Vec::new();
-    for candidate in psql_candidates() {
-        match check_psql_candidate(candidate).await {
-            Err(error) if error.starts_with("psql binary not found") => {
-                not_found_errors.push(error);
-            }
-            Ok(availability) => return Ok(availability),
-            Err(error) => {
-                return Ok(PsqlAvailability {
-                    available: false,
-                    path: Some(candidate.to_string()),
-                    version: None,
-                    error: Some(error),
-                });
-            }
-        }
-    }
-
-    Ok(PsqlAvailability {
-        available: false,
-        path: None,
-        version: None,
-        error: Some(format!(
-            "Could not find psql. Tried: {}",
-            not_found_errors.join(", ")
-        )),
-    })
-}
-
-async fn run_psql_meta_command_with_binary(
-    psql_path: &str,
-    host: &str,
-    port: &str,
-    username: &str,
-    password: &str,
-    database: &str,
-    command_text: &str,
-) -> Result<String, String> {
-    let mut child = Command::new(psql_path)
-        .arg("-X")
-        .arg("-w")
-        .arg("-P")
-        .arg("pager=off")
-        .arg("-h")
-        .arg(host)
-        .arg("-p")
-        .arg(port)
-        .arg("-U")
-        .arg(username)
-        .arg("-d")
-        .arg(database)
-        .env("PGPASSWORD", password)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| {
-            if error.kind() == ErrorKind::NotFound {
-                format!("psql binary not found at {}", psql_path)
-            } else {
-                format!("Failed to start psql: {}", error)
-            }
-        })?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(command_text.as_bytes())
-            .await
-            .map_err(|error| format!("Failed to write command to psql: {}", error))?;
-        if !command_text.ends_with('\n') {
-            stdin
-                .write_all(b"\n")
-                .await
-                .map_err(|error| format!("Failed to finish command for psql: {}", error))?;
-        }
-    }
-
-    let mut output_task = tokio::spawn(async move { child.wait_with_output().await });
-    let mut receiver = CHANNEL.1.lock().await;
-
-    let output = tokio::select! {
-        _ = receiver.recv() => {
-            output_task.abort();
-            return Err("Query was cancelled".to_string());
-        }
-        result = &mut output_task => {
-            result
-                .map_err(|error| format!("Failed to wait for psql: {}", error))?
-                .map_err(|error| format!("Failed to run psql: {}", error))?
-        }
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
-
-    if output.status.success() {
-        return Ok(combined_output);
-    }
-
-    let trimmed_output = combined_output.trim();
-    if trimmed_output.is_empty() {
-        Err(format!("psql exited with status {}", output.status))
-    } else {
-        Err(trimmed_output.to_string())
-    }
-}
-
-#[tauri::command]
-async fn execute_psql_meta_command(
-    host: String,
-    port: String,
-    username: String,
-    password: String,
-    database: String,
-    command_text: String,
-) -> Result<String, String> {
-    if !command_text.trim_start().starts_with('\\') {
-        return Err("Meta command mode expects a psql backslash command.".to_string());
-    }
-
-    let mut not_found_errors = Vec::new();
-    for candidate in psql_candidates() {
-        match run_psql_meta_command_with_binary(
-            candidate,
-            &host,
-            &port,
-            &username,
-            &password,
-            &database,
-            &command_text,
-        )
-        .await
-        {
-            Err(error) if error.starts_with("psql binary not found") => {
-                not_found_errors.push(error);
-            }
-            result => return result,
-        }
-    }
-
-    Err(format!(
-        "Could not find psql. Tried: {}",
-        not_found_errors.join(", ")
-    ))
-}
-
-#[tauri::command]
-async fn execute_query_batch(
-    connection_string: &str,
+async fn execute_query(
+    registry: State<'_, Registry>,
+    connection: ConnectionParams,
     statements: Vec<String>,
-) -> Result<String, String> {
-    if statements.is_empty() {
-        return Err("No SQL statements to execute".to_string());
-    }
+    row_limit: usize,
+) -> Result<QueryResult, String> {
+    let row_limit = row_limit.clamp(1, MAX_ROW_LIMIT);
+    // Registered before anything else (even the password lookup or connect) so Abort always works.
+    let guard = registry.begin();
+    let password = blocking_password(&connection.id).await?;
 
-    let client = setup_connection(connection_string)
+    match connection.db_type {
+        DbType::Postgres => postgres::execute(&connection, &password, &statements, row_limit, &guard).await,
+        DbType::Clickhouse => clickhouse::execute(&connection, &password, &statements, row_limit, &guard).await,
+    }
+}
+
+/// Backslash commands: the text goes to the real `psql`, unfiltered. If `psql` is not installed the
+/// built-in read-only catalog commands (`meta.rs`) are used instead.
+#[tauri::command]
+async fn execute_meta_command(
+    registry: State<'_, Registry>,
+    connection: ConnectionParams,
+    command_text: String,
+) -> Result<meta::MetaOutput, String> {
+    if connection.db_type != DbType::Postgres {
+        return Err("Backslash commands are only available for Postgres connections. For ClickHouse use SHOW DATABASES, SHOW TABLES, DESCRIBE TABLE <name>.".to_string());
+    }
+    let guard = registry.begin();
+    let password = blocking_password(&connection.id).await?;
+
+    match psql::execute(&connection, &password, &command_text, &guard).await {
+        Ok(text) => Ok(meta::MetaOutput { text }),
+        Err(psql::PsqlError::Failed(message)) => Err(message),
+        Err(psql::PsqlError::NotInstalled(_)) => meta::execute(&connection, &password, &command_text, &guard)
+            .await
+            .map_err(|e| format!("psql is not installed, so only the built-in read-only commands are available. {e}")),
+    }
+}
+
+#[tauri::command]
+async fn cancel_query(registry: State<'_, Registry>) -> Result<(), String> {
+    registry.cancel().await;
+    Ok(())
+}
+
+async fn blocking_password(connection_id: &str) -> Result<String, String> {
+    let id = connection_id.to_string();
+    tokio::task::spawn_blocking(move || secrets::password_or_empty(&id))
         .await
-        .map_err(|e| e.to_string())?;
-
-    let cancel_token = client.cancel_token();
-    let query_future = async { execute_statements_in_session(&client, &statements).await };
-
-    let mut receiver = CHANNEL.1.lock().await;
-
-    let rows: EncodedRows;
-    tokio::select! {
-        _ = receiver.recv() => {
-            let _ = cancel_token.cancel_query(NoTls).await;
-            return Err("Query was cancelled".to_string())
-        }
-        result = query_future => {
-            match result {
-                Ok(arr) => rows = arr,
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    rows_to_json(rows)
+        .map_err(|e| e.to_string())?
 }
 
-fn rows_to_json(rows: EncodedRows) -> Result<String, String> {
-    serde_json::to_string(&rows).map_err(|e| e.to_string())
+#[tauri::command]
+async fn save_password(connection_id: String, password: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || secrets::set(&connection_id, &password))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
-fn ui_value_type(pg_type: &Type) -> &'static str {
-    match pg_type.kind() {
-        Kind::Array(_) => return "array",
-        Kind::Domain(inner) => return ui_value_type(inner),
-        _ => {}
-    }
-
-    match *pg_type {
-        Type::BOOL => "bool",
-        Type::INT2 | Type::INT4 | Type::INT8 | Type::FLOAT4 | Type::FLOAT8 | Type::OID => "number",
-        Type::TIMESTAMP => "timestamp",
-        Type::TIMESTAMPTZ => "timestamp tz",
-        Type::JSONB | Type::JSON => "json",
-        _ => "string",
-    }
+#[tauri::command]
+async fn delete_password(connection_id: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || secrets::delete(&connection_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
-fn normalize_text_value(pg_type: &Type, value: &str) -> String {
-    if let Kind::Domain(inner) = pg_type.kind() {
-        return normalize_text_value(inner, value);
-    }
+/// The saved password itself (used by the eye icon in the connection form and by "export with passwords").
+#[tauri::command]
+async fn get_password(connection_id: String) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || secrets::get(&connection_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
-    if *pg_type == Type::BOOL {
-        return match value {
-            "t" => "true".to_string(),
-            "f" => "false".to_string(),
-            _ => value.to_string(),
-        };
-    }
+#[tauri::command]
+async fn has_password(connection_id: String) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || secrets::get(&connection_id).map(|p| p.is_some()))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
-    value.to_string()
+#[tauri::command]
+async fn storage_read(app: AppHandle, name: String) -> Result<Option<String>, String> {
+    storage::read(&app, &name).await
+}
+
+#[tauri::command]
+async fn storage_write(app: AppHandle, name: String, content: String) -> Result<(), String> {
+    storage::write(&app, &name, &content).await
+}
+
+#[tauri::command]
+async fn storage_quarantine(app: AppHandle, name: String) -> Result<Option<String>, String> {
+    storage::quarantine(&app, &name).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(Registry::default())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
             execute_query,
-            execute_query_batch,
-            check_psql_availability,
-            execute_psql_meta_command,
-            cancel_query
+            execute_meta_command,
+            cancel_query,
+            save_password,
+            delete_password,
+            has_password,
+            get_password,
+            storage_read,
+            storage_write,
+            storage_quarantine,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

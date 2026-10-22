@@ -1,12 +1,19 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import type { SavedQuery, SavedResult } from "../types/app";
+import { GripIcon, RefreshIcon, TrashIcon } from "./icons";
+
+export type SaveScope = "local" | "global";
+type ItemType = "query" | "result";
 
 interface SidebarProps {
-  activeSaveScope: "local" | "global";
+  activeSaveScope: SaveScope;
   activeSidebarTab: "queries" | "results";
   savedQueries: SavedQuery[];
   savedResults: SavedResult[];
-  onSetSaveScope: (scope: "local" | "global") => void;
+  /** Ids of the query / result last loaded into the editor / table (highlighted in the list). */
+  activeQueryId: string | null;
+  activeResultId: string | null;
+  onSetSaveScope: (scope: SaveScope) => void;
   onSetSidebarTab: (tab: "queries" | "results") => void;
   onSelectQuery: (query: SavedQuery) => void;
   onSelectResult: (result: SavedResult) => void;
@@ -18,11 +25,88 @@ interface SidebarProps {
   onReorderResult: (fromId: string, toId: string) => void;
 }
 
+interface SavedItemProps {
+  type: ItemType;
+  id: string;
+  name: string;
+  preview: string;
+  active: boolean;
+  dragging: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onOverwrite: () => void;
+  overwriteTitle: string;
+  onStartReorder: (event: MouseEvent<HTMLButtonElement>) => void;
+  onReorderHover: () => void;
+  onStopReorder: () => void;
+}
+
+function SavedItem({
+  type,
+  name,
+  preview,
+  active,
+  dragging,
+  onSelect,
+  onDelete,
+  onOverwrite,
+  overwriteTitle,
+  onStartReorder,
+  onReorderHover,
+  onStopReorder,
+}: SavedItemProps): ReactNode {
+  return (
+    <div
+      className={`query-item ${active ? "active" : ""} ${dragging ? "dragging" : ""}`}
+      onMouseEnter={onReorderHover}
+      onMouseUp={onStopReorder}
+    >
+      <button
+        aria-label={`Reorder saved ${type}`}
+        className={`drag-query drag-query-side ${dragging ? "active" : ""}`}
+        onMouseDown={onStartReorder}
+        title="Drag to reorder"
+        type="button"
+      >
+        <GripIcon />
+      </button>
+      <div className="query-main">
+        <button className="query-content query-select" onClick={onSelect} type="button">
+          <span className="query-name">{name}</span>
+          <span className="query-preview">{preview}</span>
+        </button>
+        <div className="query-actions">
+          <button
+            aria-label={`Delete saved ${type}`}
+            className="delete-query"
+            onClick={onDelete}
+            title={`Delete saved ${type}`}
+            type="button"
+          >
+            <TrashIcon />
+          </button>
+          <button
+            aria-label={`Overwrite saved ${type}`}
+            className="overwrite-query"
+            onClick={onOverwrite}
+            title={overwriteTitle}
+            type="button"
+          >
+            <RefreshIcon />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Sidebar({
   activeSaveScope,
   activeSidebarTab,
   savedQueries,
   savedResults,
+  activeQueryId,
+  activeResultId,
   onSetSaveScope,
   onSetSidebarTab,
   onSelectQuery,
@@ -34,7 +118,7 @@ export function Sidebar({
   onReorderQuery,
   onReorderResult,
 }: SidebarProps) {
-  const [draggingItem, setDraggingItem] = useState<{ id: string; type: "query" | "result" } | null>(null);
+  const [draggingItem, setDraggingItem] = useState<{ id: string; type: ItemType } | null>(null);
 
   useEffect(() => {
     const handleMouseUp = () => setDraggingItem(null);
@@ -42,20 +126,15 @@ export function Sidebar({
     return () => window.removeEventListener("mouseup", handleMouseUp);
   }, []);
 
-  const startReorder = (event: MouseEvent<HTMLButtonElement>, itemId: string, itemType: "query" | "result") => {
+  const startReorder = (event: MouseEvent<HTMLButtonElement>, id: string, type: ItemType) => {
     event.preventDefault();
     event.stopPropagation();
-    setDraggingItem({ id: itemId, type: itemType });
+    setDraggingItem({ id, type });
   };
 
-  const handleReorderHover = (targetItemId: string, targetItemType: "query" | "result") => {
-    if (!draggingItem || draggingItem.type !== targetItemType || draggingItem.id === targetItemId) return;
-
-    if (targetItemType === "query") {
-      onReorderQuery(draggingItem.id, targetItemId);
-    } else {
-      onReorderResult(draggingItem.id, targetItemId);
-    }
+  const handleReorderHover = (targetId: string, targetType: ItemType) => {
+    if (!draggingItem || draggingItem.type !== targetType || draggingItem.id === targetId) return;
+    (targetType === "query" ? onReorderQuery : onReorderResult)(draggingItem.id, targetId);
   };
 
   return (
@@ -63,147 +142,61 @@ export function Sidebar({
       <div className="sidebar-header">
         <h3>Saved Stuff</h3>
         <div className="sidebar-toggle sidebar-scope-toggle">
-          <button className={activeSaveScope === "local" ? "active" : ""} onClick={() => onSetSaveScope("local")} type="button">Local</button>
-          <button className={activeSaveScope === "global" ? "active" : ""} onClick={() => onSetSaveScope("global")} type="button">Global</button>
+          <button className={activeSaveScope === "local" ? "active" : ""} onClick={() => onSetSaveScope("local")} type="button">
+            Local
+          </button>
+          <button className={activeSaveScope === "global" ? "active" : ""} onClick={() => onSetSaveScope("global")} type="button">
+            Global
+          </button>
         </div>
       </div>
       <div className="sidebar-controls">
         <div className="sidebar-toggle">
-          <button className={activeSidebarTab === "queries" ? "active" : ""} onClick={() => onSetSidebarTab("queries")} type="button">Queries</button>
-          <button className={activeSidebarTab === "results" ? "active" : ""} onClick={() => onSetSidebarTab("results")} type="button">Results</button>
+          <button className={activeSidebarTab === "queries" ? "active" : ""} onClick={() => onSetSidebarTab("queries")} type="button">
+            Queries
+          </button>
+          <button className={activeSidebarTab === "results" ? "active" : ""} onClick={() => onSetSidebarTab("results")} type="button">
+            Results
+          </button>
         </div>
       </div>
       <div className="query-list">
         {activeSidebarTab === "queries"
           ? savedQueries.map((query) => (
-              <div
-                className={`query-item ${query.active ? "active" : ""} ${draggingItem?.id === query.id ? "dragging" : ""}`}
+              <SavedItem
+                active={query.id === activeQueryId}
+                dragging={draggingItem?.id === query.id}
+                id={query.id}
                 key={query.id}
-                onClick={() => onSelectQuery(query)}
-                onMouseEnter={() => handleReorderHover(query.id, "query")}
-                onMouseUp={() => setDraggingItem(null)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => event.key === "Enter" && onSelectQuery(query)}
-              >
-                <button
-                  aria-label="Reorder saved query"
-                  className={`drag-query drag-query-side ${draggingItem?.id === query.id ? "active" : ""}`}
-                  onClick={(event) => event.stopPropagation()}
-                  onMouseDown={(event) => startReorder(event, query.id, "query")}
-                  title="Drag to reorder"
-                  type="button"
-                >
-                  <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                    <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
-                  </svg>
-                </button>
-                <div className="query-main">
-                  <div className="query-content">
-                    <span className="query-name">{query.name}</span>
-                    <span className="query-preview">{`${query.query.substring(0, 50)}...`}</span>
-                  </div>
-                  <div className="query-actions">
-                    <button
-                      aria-label="Delete saved query"
-                      className="delete-query"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onDeleteQuery(query);
-                      }}
-                      title="Delete saved query"
-                      type="button"
-                    >
-                      <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                        <path d="M3 6h18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                        <path d="M8 6V4h8v2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                        <path d="M19 6v14H5V6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                        <path d="M10 11v6M14 11v6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      </svg>
-                    </button>
-                    <button
-                      aria-label="Overwrite saved query"
-                      className="overwrite-query"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOverwriteQuery(query);
-                      }}
-                      title="Overwrite with current query"
-                      type="button"
-                    >
-                      <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                        <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                        <path d="M21 3v6h-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              </div>
+                name={query.name}
+                onDelete={() => onDeleteQuery(query)}
+                onOverwrite={() => onOverwriteQuery(query)}
+                onReorderHover={() => handleReorderHover(query.id, "query")}
+                onSelect={() => onSelectQuery(query)}
+                onStartReorder={(event) => startReorder(event, query.id, "query")}
+                onStopReorder={() => setDraggingItem(null)}
+                overwriteTitle="Overwrite with current query"
+                preview={query.query.length > 50 ? `${query.query.substring(0, 50)}...` : query.query}
+                type="query"
+              />
             ))
           : savedResults.map((result) => (
-              <div
-                className={`query-item ${result.active ? "active" : ""} ${draggingItem?.id === result.id ? "dragging" : ""}`}
+              <SavedItem
+                active={result.id === activeResultId}
+                dragging={draggingItem?.id === result.id}
+                id={result.id}
                 key={result.id}
-                onClick={() => onSelectResult(result)}
-                onMouseEnter={() => handleReorderHover(result.id, "result")}
-                onMouseUp={() => setDraggingItem(null)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => event.key === "Enter" && onSelectResult(result)}
-              >
-                <button
-                  aria-label="Reorder saved result"
-                  className={`drag-query drag-query-side ${draggingItem?.id === result.id ? "active" : ""}`}
-                  onClick={(event) => event.stopPropagation()}
-                  onMouseDown={(event) => startReorder(event, result.id, "result")}
-                  title="Drag to reorder"
-                  type="button"
-                >
-                  <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                    <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
-                  </svg>
-                </button>
-                <div className="query-main">
-                  <div className="query-content">
-                    <span className="query-name">{result.name}</span>
-                    <span className="query-preview">{`${result.records.length} records`}</span>
-                  </div>
-                  <div className="query-actions">
-                    <button
-                      aria-label="Delete saved result"
-                      className="delete-query"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onDeleteResult(result);
-                      }}
-                      title="Delete saved result"
-                      type="button"
-                    >
-                      <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                        <path d="M3 6h18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                        <path d="M8 6V4h8v2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                        <path d="M19 6v14H5V6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                        <path d="M10 11v6M14 11v6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      </svg>
-                    </button>
-                    <button
-                      aria-label="Overwrite saved result"
-                      className="overwrite-query"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOverwriteResult(result);
-                      }}
-                      title="Overwrite with current query and results"
-                      type="button"
-                    >
-                      <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                        <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                        <path d="M21 3v6h-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              </div>
+                name={result.name}
+                onDelete={() => onDeleteResult(result)}
+                onOverwrite={() => onOverwriteResult(result)}
+                onReorderHover={() => handleReorderHover(result.id, "result")}
+                onSelect={() => onSelectResult(result)}
+                onStartReorder={(event) => startReorder(event, result.id, "result")}
+                onStopReorder={() => setDraggingItem(null)}
+                overwriteTitle="Overwrite with current query and results"
+                preview={`${result.rows.length} records${result.truncated ? " (truncated)" : ""}`}
+                type="result"
+              />
             ))}
       </div>
     </div>
