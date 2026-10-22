@@ -8,18 +8,9 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
-    "opener:default",
     "dialog:allow-save",
     "dialog:allow-open",
     "fs:allow-write-text-file",
-    "fs:allow-read-text-file",
-    {
-      "identifier": "fs:scope",
-      "allow": [
-        {
-          "path": "*"
-        }
-      ]
-    }
+    "fs:allow-read-text-file"
   ]
 }

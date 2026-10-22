@@ -1,1112 +1,390 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { ConnectionModal } from "./components/ConnectionModal";
 import { ConnectionTabs } from "./components/ConnectionTabs";
 import { DataView } from "./components/DataView";
+import { ExportModal } from "./components/ExportModal";
+import { Notices } from "./components/Notices";
 import { QuerySection } from "./components/QuerySection";
 import { SaveNameModal } from "./components/SaveNameModal";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, type SaveScope } from "./components/Sidebar";
+import { useAppData } from "./hooks/useAppData";
+import { useLayoutResize } from "./hooks/useLayoutResize";
+import { useNotices } from "./hooks/useNotices";
+import { useQueryRunner } from "./hooks/useQueryRunner";
 import { useSqlEditor } from "./hooks/useSqlEditor";
-import { setRecords } from "./lib/db/common";
+import { itemsOf } from "./lib/appDataOps";
+import { isMetaCommand, MAX_ROW_LIMIT } from "./lib/db/query";
+import { normalizeBackup } from "./lib/normalize";
+import { splitSqlStatements } from "./lib/sql/splitStatements";
+import { getPassword, hasPassword } from "./lib/secrets";
 import {
-  checkPsqlAvailability,
-  executePostgresMetaCommand,
-  type PostgresMetaOutput,
-  type PsqlAvailability,
-} from "./lib/db/postgresMeta";
-import { emptyConnection, type Connection, type SavedQuery, type SavedResult } from "./types/app";
-import { getValueType, prettyPrintJson } from "./utils/record";
+  emptyDraft,
+  GLOBAL_SCOPE,
+  type Connection,
+  type ConnectionDraft,
+  type SavedQuery,
+  type SavedResult,
+} from "./types/app";
 
 type PendingDelete =
   | { type: "connection"; item: Connection }
-  | { type: "query"; item: SavedQuery; scope: "local" | "global" }
-  | { type: "result"; item: SavedResult; scope: "local" | "global" };
-type PsqlAvailabilityState =
-  | { status: "checking" }
-  | { status: "ready"; availability: PsqlAvailability }
-  | { status: "error"; error: string };
-type CommandAvailability = {
-  status: "checking" | "available" | "unavailable";
-  label: string;
-  detail: string;
-};
+  | { type: "query"; item: SavedQuery; scope: string }
+  | { type: "result"; item: SavedResult; scope: string };
 
-const reorderById = <T extends { id: string }>(items: T[], fromId: string, toId: string): T[] => {
-  const fromIndex = items.findIndex((item) => item.id === fromId);
-  const toIndex = items.findIndex((item) => item.id === toId);
-  if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return items;
+interface ConnectionModalState {
+  draft: ConnectionDraft;
+  isEditing: boolean;
+  hasSavedPassword: boolean | null;
+}
 
-  const nextItems = [...items];
-  const [movedItem] = nextItems.splice(fromIndex, 1);
-  nextItems.splice(toIndex, 0, movedItem);
-  return nextItems;
-};
+/** A bigger file would make the editor sluggish; run huge dumps with psql. */
+const MAX_SQL_FILE_CHARS = 5_000_000;
 
-const parseStoredJson = <T,>(key: string, raw: string | null, fallback: T): T => {
-  if (!raw) return fallback;
-
-  try {
-    return JSON.parse(raw) as T;
-  } catch (error) {
-    console.warn(`Failed to parse localStorage key "${key}". Resetting to default value.`, error);
-    return fallback;
-  }
-};
-
-const isMetaCommandQuery = (query: string) => query.trimStart().startsWith("\\");
-
-const DEFAULT_SIDEBAR_WIDTH = 350;
-const DEFAULT_QUERY_HEIGHT = 185;
-const MIN_SIDEBAR_WIDTH = 220;
-const MIN_RESULTS_WIDTH = 320;
-const MIN_MAIN_HEIGHT = 160;
-const MIN_QUERY_HEIGHT = 150;
-const LAYOUT_GAP = 10;
-
-const clamp = (value: number, minimum: number, maximum: number) =>
-  Math.min(Math.max(value, minimum), maximum);
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export default function App() {
-  const appContainerRef = useRef<HTMLDivElement | null>(null);
-  const mainContentRef = useRef<HTMLDivElement | null>(null);
+  const { notices, notify, dismiss } = useNotices();
+  const appData = useAppData(notify);
+  const { data } = appData;
+  const runner = useQueryRunner();
+  const layout = useLayoutResize();
   const recordsTableRef = useRef<HTMLDivElement | null>(null);
-  const connectionNameInputRef = useRef<HTMLInputElement | null>(null);
-  const queryNameInputRef = useRef<HTMLInputElement | null>(null);
-  const resultNameInputRef = useRef<HTMLInputElement | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const isExecutingQueryRef = useRef(false);
-  const layoutResizeRef = useRef<{
-    axis: "both" | "x" | "y";
-    pointerId: number;
-    startX: number;
-    startY: number;
-    sidebarWidth: number;
-    queryHeight: number;
-    maximumSidebarWidth: number;
-    maximumQueryHeight: number;
-  } | null>(null);
 
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [allSavedQueries, setAllSavedQueries] = useState<Record<string, SavedQuery[]>>({});
-  const [allSavedResults, setAllSavedResults] = useState<Record<string, SavedResult[]>>({});
-  const [globalSavedQueries, setGlobalSavedQueries] = useState<SavedQuery[]>([]);
-  const [globalSavedResults, setGlobalSavedResults] = useState<SavedResult[]>([]);
-
-  const [queryText, setQueryText] = useState("SELECT * FROM system.tables LIMIT 10");
-  const [records, setRecordsState] = useState<any[]>([]);
-  const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [queryError, setQueryError] = useState<Error | null>(null);
-  const [queryOutput, setQueryOutput] = useState<PostgresMetaOutput | null>(null);
-  const [psqlAvailability, setPsqlAvailability] = useState<PsqlAvailabilityState>({ status: "checking" });
-
-  const [showConnectionModal, setShowConnectionModal] = useState(false);
-  const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
-  const [connectionInModal, setConnectionInModal] = useState<Connection>(emptyConnection);
-  const [showPassword, setShowPassword] = useState(false);
-
-  const [showSaveQueryModal, setShowSaveQueryModal] = useState(false);
-  const [queryNameInModal, setQueryNameInModal] = useState("");
-  const [showSaveResultModal, setShowSaveResultModal] = useState(false);
-  const [resultNameInModal, setResultNameInModal] = useState("");
-  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
-  const [activeSaveScope, setActiveSaveScope] = useState<"local" | "global">("local");
+  const [queryText, setQueryText] = useState("SELECT 1");
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [activeSaveScope, setActiveSaveScope] = useState<SaveScope>("local");
   const [activeSidebarTab, setActiveSidebarTab] = useState<"queries" | "results">("queries");
-  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
-  const [queryHeight, setQueryHeight] = useState(DEFAULT_QUERY_HEIGHT);
-  const [layoutResizeAxis, setLayoutResizeAxis] = useState<"both" | "x" | "y" | null>(null);
+  const [activeQueryId, setActiveQueryId] = useState<string | null>(null);
+  const [activeResultId, setActiveResultId] = useState<string | null>(null);
 
-  const activeConnection = useMemo(() => connections.find((connection) => connection.active) ?? null, [connections]);
-  const localSavedQueries = activeConnection ? allSavedQueries[activeConnection.id] || [] : [];
-  const localSavedResults = activeConnection ? allSavedResults[activeConnection.id] || [] : [];
-  const savedQueries = activeSaveScope === "global" ? globalSavedQueries : localSavedQueries;
-  const savedResults = activeSaveScope === "global" ? globalSavedResults : localSavedResults;
-  const recordColumns = records.length > 0 ? Object.keys(records[0]) : [];
-  const commandAvailability = useMemo<CommandAvailability>(() => {
-    if (!activeConnection) {
-      return {
-        status: "unavailable",
-        label: "Unavailable: no connection",
-        detail: "No active connection selected.",
-      };
-    }
+  const [connectionModal, setConnectionModal] = useState<ConnectionModalState | null>(null);
+  const [showSaveQueryModal, setShowSaveQueryModal] = useState(false);
+  const [showSaveResultModal, setShowSaveResultModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
-    if (activeConnection.db_type !== "postgres") {
-      return {
-        status: "unavailable",
-        label: "Unavailable: Postgres only",
-        detail: "Meta commands are available for Postgres connections only.",
-      };
-    }
+  const activeConnection = useMemo(
+    () => data.connections.find((connection) => connection.id === data.activeConnectionId) ?? null,
+    [data.activeConnectionId, data.connections],
+  );
 
-    if (psqlAvailability.status === "checking") {
-      return {
-        status: "checking",
-        label: "Checking psql",
-        detail: "Checking whether psql is installed.",
-      };
-    }
+  /** Storage scope of the list shown in the sidebar (null = local list without a connection). */
+  const sidebarScope = activeSaveScope === "global" ? GLOBAL_SCOPE : (activeConnection?.id ?? null);
+  const savedQueries = sidebarScope ? itemsOf(data, "queries", sidebarScope) : [];
+  const savedResults = sidebarScope ? itemsOf(data, "results", sidebarScope) : [];
 
-    if (psqlAvailability.status === "error") {
-      return {
-        status: "unavailable",
-        label: "Unavailable: psql check failed",
-        detail: psqlAvailability.error,
-      };
-    }
+  const modalOpen = Boolean(connectionModal || showSaveQueryModal || showSaveResultModal || showExportModal || pendingDelete);
+  const modalOpenRef = useRef(modalOpen);
+  modalOpenRef.current = modalOpen;
 
-    if (psqlAvailability.availability.available) {
-      return {
-        status: "available",
-        label: "ok",
-        detail: psqlAvailability.availability.version ?? "psql is installed.",
-      };
-    }
-
-    return {
-      status: "unavailable",
-      label: psqlAvailability.availability.path
-        ? "Unavailable: psql check failed"
-        : "Unavailable: psql not installed",
-      detail: psqlAvailability.availability.error ?? "psql is not installed.",
-    };
-  }, [activeConnection, psqlAvailability]);
-
-  const persistConnections = (next: Connection[]) => localStorage.setItem("connections", JSON.stringify(next));
-  const persistQueries = (next: Record<string, SavedQuery[]>) => localStorage.setItem("savedQueries", JSON.stringify(next));
-  const persistResults = (next: Record<string, SavedResult[]>) => localStorage.setItem("savedResults", JSON.stringify(next));
-  const persistGlobalQueries = (next: SavedQuery[]) => localStorage.setItem("globalSavedQueries", JSON.stringify(next));
-  const persistGlobalResults = (next: SavedResult[]) => localStorage.setItem("globalSavedResults", JSON.stringify(next));
-
-  useEffect(() => {
-    const storedConnections = localStorage.getItem("connections");
-    const storedQueries = localStorage.getItem("savedQueries");
-    const storedResults = localStorage.getItem("savedResults");
-    const storedGlobalQueries = localStorage.getItem("globalSavedQueries");
-    const storedGlobalResults = localStorage.getItem("globalSavedResults");
-
-    const parsedConnections = parseStoredJson<unknown[]>("connections", storedConnections, []);
-    const parsedQueries = parseStoredJson<unknown>("savedQueries", storedQueries, {});
-    const parsedResults = parseStoredJson<Record<string, unknown>>("savedResults", storedResults, {});
-    const parsedGlobalQueries = parseStoredJson<unknown[]>("globalSavedQueries", storedGlobalQueries, []);
-    const parsedGlobalResults = parseStoredJson<unknown[]>("globalSavedResults", storedGlobalResults, []);
-
-    let nextConnections: Connection[] = [];
-    if (Array.isArray(parsedConnections)) {
-      nextConnections = parsedConnections.map((connection) => {
-        const typedConnection = connection as Connection;
-        return {
-          ...typedConnection,
-          id: typedConnection.id || crypto.randomUUID(),
-        };
-      });
-      if (nextConnections.length > 0) {
-        nextConnections = nextConnections.map((connection, index) => ({ ...connection, active: index === 0 }));
-      }
-    }
-
-    let nextQueries: Record<string, SavedQuery[]> = {};
-    if (Array.isArray(parsedQueries)) {
-      if (nextConnections.length > 0) {
-        nextQueries[nextConnections[0].id] = parsedQueries.map((query) => {
-          const typedQuery = query as SavedQuery;
-          return {
-            ...typedQuery,
-            id: typedQuery.id || crypto.randomUUID(),
-          };
-        });
-      }
-    } else if (parsedQueries && typeof parsedQueries === "object") {
-      const parsedQueryRecord = parsedQueries as Record<string, unknown>;
-      for (const connectionId in parsedQueryRecord) {
-        const connectionQueries = parsedQueryRecord[connectionId];
-        if (!Array.isArray(connectionQueries)) continue;
-        nextQueries[connectionId] = connectionQueries.map((query) => {
-          const typedQuery = query as SavedQuery;
-          return {
-            ...typedQuery,
-            id: typedQuery.id || crypto.randomUUID(),
-          };
-        });
-      }
-    }
-
-    let nextResults: Record<string, SavedResult[]> = {};
-    if (parsedResults && typeof parsedResults === "object") {
-      for (const connectionId in parsedResults) {
-        const connectionResults = parsedResults[connectionId];
-        if (!Array.isArray(connectionResults)) continue;
-        nextResults[connectionId] = connectionResults.map((result) => {
-          const typedResult = result as SavedResult;
-          return {
-            ...typedResult,
-            id: typedResult.id || crypto.randomUUID(),
-          };
-        });
-      }
-    }
-
-    const nextGlobalQueries: SavedQuery[] = Array.isArray(parsedGlobalQueries)
-      ? parsedGlobalQueries.map((query) => {
-          const typedQuery = query as SavedQuery;
-          return {
-            ...typedQuery,
-            id: typedQuery.id || crypto.randomUUID(),
-          };
-        })
-      : [];
-
-    const nextGlobalResults: SavedResult[] = Array.isArray(parsedGlobalResults)
-      ? parsedGlobalResults.map((result) => {
-          const typedResult = result as SavedResult;
-          return {
-            ...typedResult,
-            id: typedResult.id || crypto.randomUUID(),
-          };
-        })
-      : [];
-
-    setConnections(nextConnections);
-    setAllSavedQueries(nextQueries);
-    setAllSavedResults(nextResults);
-    setGlobalSavedQueries(nextGlobalQueries);
-    setGlobalSavedResults(nextGlobalResults);
-    persistConnections(nextConnections);
-    persistQueries(nextQueries);
-    persistResults(nextResults);
-    persistGlobalQueries(nextGlobalQueries);
-    persistGlobalResults(nextGlobalResults);
-  }, []);
-
-  useEffect(() => {
-    let isCurrent = true;
-    setPsqlAvailability({ status: "checking" });
-
-    checkPsqlAvailability()
-      .then((availability) => {
-        if (!isCurrent) return;
-        setPsqlAvailability({ status: "ready", availability });
-      })
-      .catch((error: unknown) => {
-        if (!isCurrent) return;
-        setPsqlAvailability({
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-
-    return () => {
-      isCurrent = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (showConnectionModal) connectionNameInputRef.current?.focus();
-  }, [showConnectionModal]);
-
-  useEffect(() => {
-    if (showSaveQueryModal) queryNameInputRef.current?.focus();
-  }, [showSaveQueryModal]);
-
-  useEffect(() => {
-    if (showSaveResultModal) resultNameInputRef.current?.focus();
-  }, [showSaveResultModal]);
-
-  const scrollToSelected = () => {
-    requestAnimationFrame(() => {
-      const selectedElement = recordsTableRef.current?.querySelector(".record-row.active");
-      if (selectedElement) {
-        selectedElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-    });
-  };
-
-  const onQueryError = (error: Error) => {
-    isExecutingQueryRef.current = false;
-    abortControllerRef.current = null;
-    setQueryOutput(null);
-    if (error.name === "AbortError") {
-      setQueryError(new Error("Query was aborted."));
-    } else {
-      setQueryError(error);
-    }
-    setRecordsState([]);
-    setIsLoading(false);
-  };
-
+  // --- running queries ----------------------------------------------------------------------
   const executeQuery = () => {
-    if (isExecutingQueryRef.current) return;
-    isExecutingQueryRef.current = true;
-
-    setIsLoading(true);
-    setQueryError(null);
-    setQueryOutput(null);
-    setSelectedRecord(null);
-
+    // The single guard for every way of starting a query (button, window shortcut, editor shortcut).
+    if (modalOpenRef.current || runner.isLoading) return;
     if (!activeConnection) {
-      onQueryError(new Error("No active connection selected."));
+      runner.reportError("No active connection selected.");
       return;
     }
-
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    if (isMetaCommandQuery(queryText)) {
-      executePostgresMetaCommand(
-        queryText,
-        activeConnection,
-        (output) => {
-          isExecutingQueryRef.current = false;
-          abortControllerRef.current = null;
-          setRecordsState([]);
-          setQueryOutput(output);
-          setIsLoading(false);
-        },
-        onQueryError,
-        abortController.signal,
-      );
-      return;
-    }
-
-    setRecords(
-      queryText,
-      activeConnection,
-      (newRecords: unknown[]) => {
-        isExecutingQueryRef.current = false;
-        abortControllerRef.current = null;
-        setRecordsState(newRecords as any[]);
-        setIsLoading(false);
-      },
-      onQueryError,
-      abortController.signal,
-    );
+    setSelectedIndex(null);
+    runner.run(activeConnection, queryText);
   };
 
-  const abortQuery = () => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+  const loadMore = () => {
+    const last = runner.lastRun;
+    if (!last || runner.isLoading) return;
+    setSelectedIndex(null);
+    runner.run(last.connection, last.sql, Math.min(last.rowLimit * 10, MAX_ROW_LIMIT));
   };
 
-  const { editorRef, editorContainerRef } = useSqlEditor(queryText, setQueryText, executeQuery);
+  const executeRef = useRef(executeQuery);
+  executeRef.current = executeQuery;
 
+  const { editorRef, editorContainerRef, replaceText } = useSqlEditor(
+    queryText,
+    activeConnection?.db_type ?? "postgres",
+    setQueryText,
+    () => executeRef.current(),
+  );
+
+  const rowCount = runner.result?.rows.length ?? 0;
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const isTextInputTarget = Boolean(
         target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
       );
-      const hasOpenModal = showConnectionModal || showSaveQueryModal || showSaveResultModal || Boolean(pendingDelete);
 
       if (event.ctrlKey && event.key === "Enter") {
-        if (hasOpenModal || isTextInputTarget) return;
+        if (isTextInputTarget) return;
         event.preventDefault();
-        executeQuery();
+        executeRef.current();
         return;
       }
+
+      if (modalOpenRef.current || isTextInputTarget) return;
 
       if (event.key === "Escape") {
-        if (showConnectionModal) return setShowConnectionModal(false);
-        if (showSaveQueryModal) return setShowSaveQueryModal(false);
-        if (showSaveResultModal) return setShowSaveResultModal(false);
-        if (pendingDelete) return setPendingDelete(null);
-        if (selectedRecord) return setSelectedRecord(null);
-      }
-
-      if (isTextInputTarget) {
+        setSelectedIndex(null);
         return;
       }
 
-      if (!selectedRecord || records.length === 0) return;
+      if (selectedIndex === null || rowCount === 0 || event.ctrlKey || event.metaKey || event.altKey) return;
 
       if (event.key === "ArrowDown" || event.key === "j") {
         event.preventDefault();
-        const currentIndex = records.indexOf(selectedRecord);
-        const nextIndex = (currentIndex + 1) % records.length;
-        setSelectedRecord(records[nextIndex]);
-        scrollToSelected();
+        setSelectedIndex((selectedIndex + 1) % rowCount);
       } else if (event.key === "ArrowUp" || event.key === "k") {
         event.preventDefault();
-        const currentIndex = records.indexOf(selectedRecord);
-        const previousIndex = (currentIndex - 1 + records.length) % records.length;
-        setSelectedRecord(records[previousIndex]);
-        scrollToSelected();
+        setSelectedIndex((selectedIndex - 1 + rowCount) % rowCount);
       }
     };
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, [executeQuery, records, selectedRecord, showConnectionModal, showSaveQueryModal, showSaveResultModal, pendingDelete]);
+  }, [rowCount, selectedIndex]);
 
-  const addConnection = () => {
-    setEditingConnection(null);
-    setConnectionInModal(emptyConnection);
-    setShowPassword(false);
-    setShowConnectionModal(true);
-  };
+  // --- connections --------------------------------------------------------------------------
+  const addConnection = () => setConnectionModal({ draft: emptyDraft(), isEditing: false, hasSavedPassword: null });
 
   const editConnection = (connection: Connection) => {
-    setEditingConnection(connection);
-    setConnectionInModal({ ...connection });
-    setShowPassword(false);
-    setShowConnectionModal(true);
+    setConnectionModal({ draft: { ...connection, password: "" }, isEditing: true, hasSavedPassword: null });
+    hasPassword(connection.id)
+      .then((saved) => setConnectionModal((current) => (current ? { ...current, hasSavedPassword: saved } : current)))
+      .catch(() => undefined);
   };
 
-  const saveConnection = () => {
-    const nextConnections = [...connections];
-    const nextSavedQueries = { ...allSavedQueries };
-    const nextSavedResults = { ...allSavedResults };
-
-    if (editingConnection) {
-      const index = nextConnections.findIndex((connection) => connection.id === editingConnection.id);
-      if (index !== -1) {
-        nextConnections[index] = {
-          ...connectionInModal,
-          id: editingConnection.id,
-          active: editingConnection.active,
-        };
-      }
-    } else {
-      const newConnection: Connection = {
-        ...connectionInModal,
-        id: crypto.randomUUID(),
-        active: nextConnections.length === 0,
-      };
-      nextConnections.push(newConnection);
-      nextSavedQueries[newConnection.id] = [];
-      nextSavedResults[newConnection.id] = [];
-    }
-
-    setConnections(nextConnections);
-    setAllSavedQueries(nextSavedQueries);
-    setAllSavedResults(nextSavedResults);
-    persistConnections(nextConnections);
-    persistQueries(nextSavedQueries);
-    persistResults(nextSavedResults);
-    setShowConnectionModal(false);
+  const saveConnection = async (draft: ConnectionDraft) => {
+    if (await appData.saveConnection(draft)) setConnectionModal(null);
   };
 
-  const deleteConnection = (connectionToDelete: Connection) => {
-    const nextConnections = connections.filter((connection) => connection.id !== connectionToDelete.id);
-    const nextSavedQueries = { ...allSavedQueries };
-    const nextSavedResults = { ...allSavedResults };
-    delete nextSavedQueries[connectionToDelete.id];
-    delete nextSavedResults[connectionToDelete.id];
-
-    if (connectionToDelete.active && nextConnections.length > 0) {
-      nextConnections[0].active = true;
-    }
-
-    setConnections(nextConnections);
-    setAllSavedQueries(nextSavedQueries);
-    setAllSavedResults(nextSavedResults);
-    persistConnections(nextConnections);
-    persistQueries(nextSavedQueries);
-    persistResults(nextSavedResults);
+  const selectTab = (connection: Connection) => {
+    if (connection.id === data.activeConnectionId) return;
+    // A running query belongs to the previous connection.
+    if (runner.isLoading) runner.abort();
+    appData.selectConnection(connection.id);
   };
 
-  const promptSaveQuery = () => {
-    setQueryNameInModal("");
-    setShowSaveQueryModal(true);
-  };
-
-  const saveQueryConfirmed = () => {
-    if (!queryNameInModal) return;
-
-    const newQuery: SavedQuery = { id: crypto.randomUUID(), name: queryNameInModal, query: queryText };
-
-    if (activeSaveScope === "global") {
-      const nextGlobalSavedQueries = [...globalSavedQueries, newQuery];
-      setGlobalSavedQueries(nextGlobalSavedQueries);
-      persistGlobalQueries(nextGlobalSavedQueries);
-      setShowSaveQueryModal(false);
+  // --- saved queries & results ----------------------------------------------------------------
+  const saveQueryConfirmed = (name: string) => {
+    if (!sidebarScope) {
+      notify("error", "Select a connection first, or switch to Global.");
       return;
     }
-
-    if (!activeConnection) return;
-
-    const nextSavedQueries = { ...allSavedQueries };
-    const currentQueries = nextSavedQueries[activeConnection.id] || [];
-    nextSavedQueries[activeConnection.id] = [...currentQueries, newQuery];
-
-    setAllSavedQueries(nextSavedQueries);
-    persistQueries(nextSavedQueries);
+    appData.addQuery(sidebarScope, { id: crypto.randomUUID(), name, query: queryText });
     setShowSaveQueryModal(false);
   };
 
-  const deleteQuery = (queryToDelete: SavedQuery, scope: "local" | "global" = activeSaveScope) => {
-    if (scope === "global") {
-      const nextGlobalSavedQueries = globalSavedQueries.filter((query) => query.id !== queryToDelete.id);
-      setGlobalSavedQueries(nextGlobalSavedQueries);
-      persistGlobalQueries(nextGlobalSavedQueries);
-      return;
-    }
+  /** Local results are filed under the connection that produced them. */
+  const resultScope = activeSaveScope === "global" ? GLOBAL_SCOPE : (runner.resultConnectionId ?? activeConnection?.id ?? null);
 
-    if (!activeConnection) return;
-
-    const nextSavedQueries = { ...allSavedQueries };
-    nextSavedQueries[activeConnection.id] = (nextSavedQueries[activeConnection.id] || []).filter(
-      (query) => query.id !== queryToDelete.id,
-    );
-
-    setAllSavedQueries(nextSavedQueries);
-    persistQueries(nextSavedQueries);
-  };
-
-  const overwriteQuery = (queryToOverwrite: SavedQuery) => {
-    if (activeSaveScope === "global") {
-      const nextGlobalSavedQueries = globalSavedQueries.map((query) =>
-        query.id === queryToOverwrite.id ? { ...query, query: queryText } : query,
-      );
-      setGlobalSavedQueries(nextGlobalSavedQueries);
-      persistGlobalQueries(nextGlobalSavedQueries);
-      return;
-    }
-
-    if (!activeConnection) return;
-
-    const nextSavedQueries = { ...allSavedQueries };
-    nextSavedQueries[activeConnection.id] = (nextSavedQueries[activeConnection.id] || []).map((query) =>
-      query.id === queryToOverwrite.id ? { ...query, query: queryText } : query,
-    );
-
-    setAllSavedQueries(nextSavedQueries);
-    persistQueries(nextSavedQueries);
-  };
-
-  const promptSaveResult = () => {
-    setResultNameInModal("");
-    setShowSaveResultModal(true);
-  };
-
-  const saveResultConfirmed = () => {
-    if (!resultNameInModal) return;
-
-    const newResult: SavedResult = {
+  const saveResultConfirmed = (name: string) => {
+    const result = runner.result;
+    if (!result || !resultScope) return;
+    appData.addResult(resultScope, {
       id: crypto.randomUUID(),
-      name: resultNameInModal,
-      records,
-      query: queryText,
-    };
-
-    if (activeSaveScope === "global") {
-      const nextGlobalSavedResults = [...globalSavedResults, newResult];
-      setGlobalSavedResults(nextGlobalSavedResults);
-      persistGlobalResults(nextGlobalSavedResults);
-      setShowSaveResultModal(false);
-      return;
-    }
-
-    if (!activeConnection) return;
-
-    const nextSavedResults = { ...allSavedResults };
-    const currentResults = nextSavedResults[activeConnection.id] || [];
-    nextSavedResults[activeConnection.id] = [...currentResults, newResult];
-
-    setAllSavedResults(nextSavedResults);
-    persistResults(nextSavedResults);
+      name,
+      query: runner.lastRun?.sql ?? queryText,
+      columns: result.columns,
+      rows: result.rows,
+      truncated: result.truncated,
+    });
     setShowSaveResultModal(false);
   };
 
-  const deleteResult = (resultToDelete: SavedResult, scope: "local" | "global" = activeSaveScope) => {
-    if (scope === "global") {
-      const nextGlobalSavedResults = globalSavedResults.filter((result) => result.id !== resultToDelete.id);
-      setGlobalSavedResults(nextGlobalSavedResults);
-      persistGlobalResults(nextGlobalSavedResults);
+  const overwriteQuery = (query: SavedQuery) => {
+    if (sidebarScope) appData.overwriteQuery(sidebarScope, query.id, queryText);
+  };
+
+  const overwriteResult = (saved: SavedResult) => {
+    const result = runner.result;
+    if (!sidebarScope) return;
+    if (!result || result.columns.length === 0) {
+      notify("error", "There is no result to save. Run a query first.");
       return;
     }
+    appData.overwriteResult(sidebarScope, saved.id, {
+      query: runner.lastRun?.sql ?? queryText,
+      columns: result.columns,
+      rows: result.rows,
+      truncated: result.truncated,
+    });
+  };
 
-    if (!activeConnection) return;
+  const selectQuery = (query: SavedQuery) => {
+    setActiveQueryId(query.id);
+    setQueryText(query.query);
+    editorRef.current?.setValue(query.query);
+  };
 
-    const nextSavedResults = { ...allSavedResults };
-    nextSavedResults[activeConnection.id] = (nextSavedResults[activeConnection.id] || []).filter(
-      (result) => result.id !== resultToDelete.id,
+  const selectResult = (saved: SavedResult) => {
+    setActiveResultId(saved.id);
+    setSelectedIndex(null);
+    runner.showSavedResult(
+      { columns: saved.columns, rows: saved.rows, truncated: saved.truncated, message: null },
+      sidebarScope === GLOBAL_SCOPE ? null : sidebarScope,
     );
-
-    setAllSavedResults(nextSavedResults);
-    persistResults(nextSavedResults);
+    setQueryText(saved.query);
+    editorRef.current?.setValue(saved.query);
   };
 
-  const overwriteResult = (resultToOverwrite: SavedResult) => {
-    if (activeSaveScope === "global") {
-      const nextGlobalSavedResults = globalSavedResults.map((result) =>
-        result.id === resultToOverwrite.id ? { ...result, query: queryText, records } : result,
-      );
-      setGlobalSavedResults(nextGlobalSavedResults);
-      persistGlobalResults(nextGlobalSavedResults);
-      return;
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    if (pendingDelete.type === "connection") {
+      if (runner.isLoading && pendingDelete.item.id === data.activeConnectionId) runner.abort();
+      appData.deleteConnection(pendingDelete.item.id);
+    } else if (pendingDelete.type === "query") {
+      appData.removeQuery(pendingDelete.scope, pendingDelete.item.id);
+    } else {
+      appData.removeResult(pendingDelete.scope, pendingDelete.item.id);
     }
-
-    if (!activeConnection) return;
-
-    const nextSavedResults = { ...allSavedResults };
-    nextSavedResults[activeConnection.id] = (nextSavedResults[activeConnection.id] || []).map((result) =>
-      result.id === resultToOverwrite.id ? { ...result, query: queryText, records } : result,
-    );
-
-    setAllSavedResults(nextSavedResults);
-    persistResults(nextSavedResults);
+    setPendingDelete(null);
   };
 
-  const selectTab = (tab: Connection) => {
-    const nextConnections = connections.map((connection) => ({
-      ...connection,
-      active: connection.id === tab.id,
-    }));
-    setConnections(nextConnections);
-    persistConnections(nextConnections);
-  };
-
-  const reorderConnections = (fromId: string, toId: string) => {
-    setConnections((currentConnections) => {
-      const nextConnections = reorderById(currentConnections, fromId, toId);
-      if (nextConnections === currentConnections) return currentConnections;
-      persistConnections(nextConnections);
-      return nextConnections;
-    });
-  };
-
-  const reorderQueries = (fromId: string, toId: string) => {
-    if (activeSaveScope === "global") {
-      setGlobalSavedQueries((currentQueries) => {
-        const nextQueries = reorderById(currentQueries, fromId, toId);
-        if (nextQueries === currentQueries) return currentQueries;
-        persistGlobalQueries(nextQueries);
-        return nextQueries;
-      });
-      return;
-    }
-
-    if (!activeConnection) return;
-
-    setAllSavedQueries((currentSavedQueries) => {
-      const connectionId = activeConnection.id;
-      const connectionQueries = currentSavedQueries[connectionId] || [];
-      const nextConnectionQueries = reorderById(connectionQueries, fromId, toId);
-      if (nextConnectionQueries === connectionQueries) return currentSavedQueries;
-
-      const nextSavedQueries = {
-        ...currentSavedQueries,
-        [connectionId]: nextConnectionQueries,
+  const deleteModalText = (() => {
+    if (!pendingDelete) return { title: "", message: "" };
+    if (pendingDelete.type === "connection") {
+      return {
+        title: "Delete Connection",
+        message: `Are you sure you want to delete "${pendingDelete.item.name || "Unnamed"}"? Its saved queries, saved results and password are deleted too.`,
       };
-      persistQueries(nextSavedQueries);
-      return nextSavedQueries;
-    });
-  };
-
-  const reorderResults = (fromId: string, toId: string) => {
-    if (activeSaveScope === "global") {
-      setGlobalSavedResults((currentResults) => {
-        const nextResults = reorderById(currentResults, fromId, toId);
-        if (nextResults === currentResults) return currentResults;
-        persistGlobalResults(nextResults);
-        return nextResults;
-      });
-      return;
     }
+    const scopeLabel = pendingDelete.scope === GLOBAL_SCOPE ? "global " : "";
+    return pendingDelete.type === "query"
+      ? { title: "Delete Query", message: `Are you sure you want to delete ${scopeLabel}saved query "${pendingDelete.item.name}"?` }
+      : { title: "Delete Result", message: `Are you sure you want to delete ${scopeLabel}saved result "${pendingDelete.item.name}"?` };
+  })();
 
-    if (!activeConnection) return;
-
-    setAllSavedResults((currentSavedResults) => {
-      const connectionId = activeConnection.id;
-      const connectionResults = currentSavedResults[connectionId] || [];
-      const nextConnectionResults = reorderById(connectionResults, fromId, toId);
-      if (nextConnectionResults === connectionResults) return currentSavedResults;
-
-      const nextSavedResults = {
-        ...currentSavedResults,
-        [connectionId]: nextConnectionResults,
-      };
-      persistResults(nextSavedResults);
-      return nextSavedResults;
-    });
-  };
-
-  const exportConnections = async () => {
+  // --- SQL files ------------------------------------------------------------------------------
+  const openSqlFile = async () => {
     try {
-      const filePath = await save({
-        filters: [{ name: "JSON", extensions: ["json"] }],
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "SQL", extensions: ["sql", "txt"] }],
       });
-      if (!filePath) return;
+      if (!selected || Array.isArray(selected)) return;
 
-      await writeTextFile(
-        filePath,
-        JSON.stringify(
-          {
-            connections,
-            queries: allSavedQueries,
-            results: allSavedResults,
-            globalQueries: globalSavedQueries,
-            globalResults: globalSavedResults,
-          },
-          null,
-          2,
-        ),
+      const text = await readTextFile(selected);
+      if (text.length > MAX_SQL_FILE_CHARS) {
+        notify("error", `The file is too large for the editor (${(text.length / 1_000_000).toFixed(1)} million characters, limit ${MAX_SQL_FILE_CHARS / 1_000_000}). Use psql for big dumps.`);
+        return;
+      }
+
+      replaceText(text);
+      setQueryText(text);
+      setActiveQueryId(null);
+      const name = selected.split(/[\\/]/).pop() ?? selected;
+      const count = splitSqlStatements(text, activeConnection?.db_type ?? "postgres").length;
+      notify("info", `Loaded ${name}: ${count} statement${count === 1 ? "" : "s"}. Review it, then press Execute. Only the last statement's result is shown.`);
+    } catch (error) {
+      notify("error", `Could not open the file: ${errorText(error)}`);
+    }
+  };
+
+  // --- export / import ------------------------------------------------------------------------
+  const exportConnections = async (includePasswords: boolean) => {
+    setShowExportModal(false);
+    try {
+      const filePath = await save({ filters: [{ name: "JSON", extensions: ["json"] }], defaultPath: "sauron-export.json" });
+      if (!filePath) return;
+      await writeTextFile(filePath, await appData.exportText(includePasswords));
+      notify(
+        "info",
+        includePasswords
+          ? "Exported connections, queries and results. The file contains your passwords in plain text - keep it safe."
+          : "Exported connections, queries and results. Passwords are not included.",
       );
     } catch (error) {
-      console.error(error);
+      notify("error", `Export failed: ${errorText(error)}`);
     }
   };
 
   const importConnections = async () => {
     try {
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!selected) return;
+      const selected = await open({ multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (!selected || Array.isArray(selected)) return;
 
-      const rawData = await readTextFile(selected as string);
-      const importedData = JSON.parse(rawData);
-
-      let nextConnections: Connection[] = [];
-      let nextSavedQueries: Record<string, SavedQuery[]> = {};
-      let nextSavedResults: Record<string, SavedResult[]> = {};
-      let nextGlobalQueries: SavedQuery[] = [];
-      let nextGlobalResults: SavedResult[] = [];
-
-      if (importedData.connections && importedData.queries) {
-        nextConnections = importedData.connections.map((connection: Connection) => ({
-          ...connection,
-          id: connection.id || crypto.randomUUID(),
-        }));
-
-        for (const connectionId in importedData.queries) {
-          nextSavedQueries[connectionId] = importedData.queries[connectionId].map((query: SavedQuery) => ({
-            ...query,
-            id: query.id || crypto.randomUUID(),
-          }));
-        }
-
-        if (importedData.results) {
-          for (const connectionId in importedData.results) {
-            nextSavedResults[connectionId] = importedData.results[connectionId].map((result: SavedResult) => ({
-              ...result,
-              id: result.id || crypto.randomUUID(),
-            }));
-          }
-        }
-
-        if (importedData.globalQueries) {
-          nextGlobalQueries = importedData.globalQueries.map((query: SavedQuery) => ({
-            ...query,
-            id: query.id || crypto.randomUUID(),
-          }));
-        }
-
-        if (importedData.globalResults) {
-          nextGlobalResults = importedData.globalResults.map((result: SavedResult) => ({
-            ...result,
-            id: result.id || crypto.randomUUID(),
-          }));
-        }
-      } else {
-        nextConnections = importedData.map((connection: Connection) => ({
-          ...connection,
-          id: connection.id || crypto.randomUUID(),
-        }));
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await readTextFile(selected));
+      } catch {
+        notify("error", "Import failed: the file is not valid JSON.");
+        return;
       }
 
-      if (nextConnections.length > 0) {
-        nextConnections = nextConnections.map((connection, index) => ({ ...connection, active: index === 0 }));
+      const backup = normalizeBackup(parsed);
+      if (!backup) {
+        notify("error", "Import failed: this does not look like a Sauron export.");
+        return;
       }
 
-      setConnections(nextConnections);
-      setAllSavedQueries(nextSavedQueries);
-      setAllSavedResults(nextSavedResults);
-      setGlobalSavedQueries(nextGlobalQueries);
-      setGlobalSavedResults(nextGlobalResults);
-      persistConnections(nextConnections);
-      persistQueries(nextSavedQueries);
-      persistResults(nextSavedResults);
-      persistGlobalQueries(nextGlobalQueries);
-      persistGlobalResults(nextGlobalResults);
+      await appData.importBackup(backup);
+      const count = (scopes: Record<string, unknown[]>) => Object.values(scopes).reduce((sum, list) => sum + list.length, 0);
+      notify(
+        "info",
+        `Imported ${backup.connections.length} connection(s), ${count(backup.queries)} saved quer${count(backup.queries) === 1 ? "y" : "ies"} and ${count(backup.results)} saved result(s). Existing items were kept.`,
+      );
     } catch (error) {
-      console.error(error);
+      notify("error", `Import failed: ${errorText(error)}`);
     }
   };
 
-  const selectQuery = (query: SavedQuery) => {
-    if (activeSaveScope === "global") {
-      const nextGlobalSavedQueries = globalSavedQueries.map((savedQuery) => ({
-        ...savedQuery,
-        active: savedQuery.id === query.id,
-      }));
-      setGlobalSavedQueries(nextGlobalSavedQueries);
-      persistGlobalQueries(nextGlobalSavedQueries);
-      setQueryText(query.query);
-      editorRef.current?.setValue(query.query);
-      return;
-    }
-
-    if (!activeConnection) return;
-
-    const nextSavedQueries = { ...allSavedQueries };
-    nextSavedQueries[activeConnection.id] = (nextSavedQueries[activeConnection.id] || []).map((savedQuery) => ({
-      ...savedQuery,
-      active: savedQuery.id === query.id,
-    }));
-
-    setAllSavedQueries(nextSavedQueries);
-    persistQueries(nextSavedQueries);
-    setQueryText(query.query);
-    editorRef.current?.setValue(query.query);
-  };
-
-  const selectResult = (result: SavedResult) => {
-    if (activeSaveScope === "global") {
-      const nextGlobalSavedResults = globalSavedResults.map((savedResult) => ({
-        ...savedResult,
-        active: savedResult.id === result.id,
-      }));
-      setGlobalSavedResults(nextGlobalSavedResults);
-      persistGlobalResults(nextGlobalSavedResults);
-      setSelectedRecord(null);
-      setRecordsState(result.records);
-      setQueryText(result.query);
-      setQueryOutput(null);
-      setQueryError(null);
-      editorRef.current?.setValue(result.query);
-      return;
-    }
-
-    if (!activeConnection) return;
-
-    const nextSavedResults = { ...allSavedResults };
-    nextSavedResults[activeConnection.id] = (nextSavedResults[activeConnection.id] || []).map((savedResult) => ({
-      ...savedResult,
-      active: savedResult.id === result.id,
-    }));
-
-    setAllSavedResults(nextSavedResults);
-    persistResults(nextSavedResults);
-    setSelectedRecord(null);
-    setRecordsState(result.records);
-    setQueryText(result.query);
-    setQueryOutput(null);
-    setQueryError(null);
-    editorRef.current?.setValue(result.query);
-  };
-
-  const selectRecord = (record: any) => {
-    setSelectedRecord((currentRecord: any) => (currentRecord === record ? null : record));
-  };
-
-  const requestDeleteConnection = (connection: Connection) => {
-    setPendingDelete({ type: "connection", item: connection });
-  };
-
-  const requestDeleteQuery = (query: SavedQuery) => {
-    setPendingDelete({ type: "query", item: query, scope: activeSaveScope });
-  };
-
-  const requestDeleteResult = (result: SavedResult) => {
-    setPendingDelete({ type: "result", item: result, scope: activeSaveScope });
-  };
-
-  const confirmDelete = () => {
-    if (!pendingDelete) return;
-
-    if (pendingDelete.type === "connection") {
-      deleteConnection(pendingDelete.item);
-    } else if (pendingDelete.type === "query") {
-      deleteQuery(pendingDelete.item, pendingDelete.scope);
-    } else {
-      deleteResult(pendingDelete.item, pendingDelete.scope);
-    }
-
-    setPendingDelete(null);
-  };
-
-  const getDeleteModalText = () => {
-    if (!pendingDelete) return { title: "", message: "" };
-
-    if (pendingDelete.type === "connection") {
-      const name = pendingDelete.item.name || "Unnamed";
-      return { title: "Delete Connection", message: `Are you sure you want to delete "${name}"?` };
-    }
-
-    if (pendingDelete.type === "query") {
-      const scopeLabel = pendingDelete.scope === "global" ? "global " : "";
-      return {
-        title: "Delete Query",
-        message: `Are you sure you want to delete ${scopeLabel}saved query "${pendingDelete.item.name}"?`,
-      };
-    }
-
-    const scopeLabel = pendingDelete.scope === "global" ? "global " : "";
-    return {
-      title: "Delete Result",
-      message: `Are you sure you want to delete ${scopeLabel}saved result "${pendingDelete.item.name}"?`,
-    };
-  };
-
-  const deleteModalText = getDeleteModalText();
   const startWindowDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
-
     event.preventDefault();
-    getCurrentWindow().startDragging().catch((error) => {
-      console.warn("Failed to start window drag.", error);
-    });
+    getCurrentWindow()
+      .startDragging()
+      .catch((error) => console.warn("Failed to start window drag.", error));
   };
 
-  const startLayoutResize = (event: ReactPointerEvent<HTMLElement>, axis: "both" | "x" | "y") => {
-    if (event.button !== 0 || !mainContentRef.current || !appContainerRef.current) return;
-
-    const sidebar = mainContentRef.current.querySelector<HTMLElement>(".sidebar");
-    const querySection = appContainerRef.current.querySelector<HTMLElement>(".query-section");
-    if (!sidebar || !querySection) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-
-    const mainWidth = mainContentRef.current.getBoundingClientRect().width;
-    const sharedVerticalSpace =
-      mainContentRef.current.getBoundingClientRect().height + LAYOUT_GAP + querySection.getBoundingClientRect().height;
-
-    layoutResizeRef.current = {
-      axis,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      sidebarWidth: sidebar.getBoundingClientRect().width,
-      queryHeight: querySection.getBoundingClientRect().height,
-      maximumSidebarWidth: Math.max(MIN_SIDEBAR_WIDTH, mainWidth - LAYOUT_GAP - MIN_RESULTS_WIDTH),
-      maximumQueryHeight: Math.max(MIN_QUERY_HEIGHT, sharedVerticalSpace - LAYOUT_GAP - MIN_MAIN_HEIGHT),
-    };
-    setLayoutResizeAxis(axis);
-  };
-
-  const resizeLayout = (event: ReactPointerEvent<HTMLElement>) => {
-    const resize = layoutResizeRef.current;
-    if (!resize || resize.pointerId !== event.pointerId) return;
-
-    if (resize.axis !== "y") {
-      setSidebarWidth(
-        clamp(resize.sidebarWidth + event.clientX - resize.startX, MIN_SIDEBAR_WIDTH, resize.maximumSidebarWidth),
-      );
-    }
-    if (resize.axis !== "x") {
-      setQueryHeight(
-        clamp(resize.queryHeight - (event.clientY - resize.startY), MIN_QUERY_HEIGHT, resize.maximumQueryHeight),
-      );
-    }
-  };
-
-  const stopLayoutResize = (event: ReactPointerEvent<HTMLElement>) => {
-    if (layoutResizeRef.current?.pointerId !== event.pointerId) return;
-
-    layoutResizeRef.current = null;
-    setLayoutResizeAxis(null);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  const resizeLayoutWithKeyboard = (
-    event: ReactKeyboardEvent<HTMLElement>,
-    axis: "both" | "x" | "y" = "both",
-  ) => {
-    const increment = event.shiftKey ? 24 : 8;
-
-    if (event.key === "ArrowLeft" && axis !== "y") {
-      event.preventDefault();
-      setSidebarWidth((width) => Math.max(MIN_SIDEBAR_WIDTH, width - increment));
-    } else if (event.key === "ArrowRight" && axis !== "y") {
-      event.preventDefault();
-      const mainWidth = mainContentRef.current?.getBoundingClientRect().width ?? Number.POSITIVE_INFINITY;
-      setSidebarWidth((width) => Math.min(mainWidth - LAYOUT_GAP - MIN_RESULTS_WIDTH, width + increment));
-    } else if (event.key === "ArrowUp" && axis !== "x") {
-      event.preventDefault();
-      const querySection = appContainerRef.current?.querySelector<HTMLElement>(".query-section");
-      const mainHeight = mainContentRef.current?.getBoundingClientRect().height;
-      const maximumQueryHeight =
-        querySection && mainHeight !== undefined
-          ? Math.max(
-              MIN_QUERY_HEIGHT,
-              mainHeight + querySection.getBoundingClientRect().height - MIN_MAIN_HEIGHT,
-            )
-          : Number.POSITIVE_INFINITY;
-      setQueryHeight((height) => Math.min(maximumQueryHeight, height + increment));
-    } else if (event.key === "ArrowDown" && axis !== "x") {
-      event.preventDefault();
-      setQueryHeight((height) => Math.max(MIN_QUERY_HEIGHT, height - increment));
-    }
-  };
-
-  const resetLayoutSize = () => {
-    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
-    setQueryHeight(DEFAULT_QUERY_HEIGHT);
-  };
-
-  const layoutStyle = {
-    "--sidebar-width": `${sidebarWidth}px`,
-    "--query-section-height": `${queryHeight}px`,
-  } as CSSProperties;
+  const resultSource =
+    runner.resultConnectionId && runner.resultConnectionId !== activeConnection?.id
+      ? (data.connections.find((connection) => connection.id === runner.resultConnectionId)?.name ?? "another connection")
+      : null;
 
   return (
     <div
-      className={`app-container ${layoutResizeAxis ? `resizing-layout resizing-layout-${layoutResizeAxis}` : ""}`}
-      ref={appContainerRef}
-      style={layoutStyle}
+      className={`app-container ${layout.resizeAxis ? `resizing-layout resizing-layout-${layout.resizeAxis}` : ""}`}
+      ref={layout.appContainerRef}
+      style={layout.layoutStyle}
     >
       <div className="window-drag-region" data-tauri-drag-region onMouseDown={startWindowDrag} />
 
-      <ConnectionModal
-        show={showConnectionModal}
-        editingConnection={editingConnection}
-        connectionInModal={connectionInModal}
-        connectionNameInputRef={connectionNameInputRef}
-        showPassword={showPassword}
-        onClose={() => setShowConnectionModal(false)}
-        onSave={saveConnection}
-        onTogglePassword={() => setShowPassword((value) => !value)}
-        onDbTypeChange={(dbType) => setConnectionInModal((connection) => ({ ...connection, db_type: dbType }))}
-        onFieldChange={(field, value) => setConnectionInModal((connection) => ({ ...connection, [field]: value }))}
-      />
-
       <ConnectionTabs
-        connections={connections}
+        activeConnectionId={data.activeConnectionId}
+        connections={data.connections}
         onAddConnection={addConnection}
+        onDeleteConnection={(connection) => setPendingDelete({ type: "connection", item: connection })}
         onEditConnection={editConnection}
-        onDeleteConnection={requestDeleteConnection}
-        onSelectTab={selectTab}
-        onReorderConnections={reorderConnections}
+        onExportConnections={() => setShowExportModal(true)}
         onImportConnections={importConnections}
-        onExportConnections={exportConnections}
+        onReorderConnections={appData.moveConnection}
+        onSelectTab={selectTab}
         onWindowDragStart={startWindowDrag}
       />
 
       <div className="workspace-layout">
-        <div className="main-content" ref={mainContentRef}>
+        <div className="main-content" ref={layout.mainContentRef}>
           <Sidebar
+            activeQueryId={activeQueryId}
+            activeResultId={activeResultId}
             activeSaveScope={activeSaveScope}
             activeSidebarTab={activeSidebarTab}
-            savedQueries={savedQueries}
-            savedResults={savedResults}
-            onSetSaveScope={setActiveSaveScope}
-            onSetSidebarTab={setActiveSidebarTab}
-            onSelectQuery={selectQuery}
-            onSelectResult={selectResult}
-            onDeleteQuery={requestDeleteQuery}
-            onDeleteResult={requestDeleteResult}
+            onDeleteQuery={(query) => sidebarScope && setPendingDelete({ type: "query", item: query, scope: sidebarScope })}
+            onDeleteResult={(result) => sidebarScope && setPendingDelete({ type: "result", item: result, scope: sidebarScope })}
             onOverwriteQuery={overwriteQuery}
             onOverwriteResult={overwriteResult}
-            onReorderQuery={reorderQueries}
-            onReorderResult={reorderResults}
+            onReorderQuery={(from, to) => sidebarScope && appData.moveQuery(sidebarScope, from, to)}
+            onReorderResult={(from, to) => sidebarScope && appData.moveResult(sidebarScope, from, to)}
+            onSelectQuery={selectQuery}
+            onSelectResult={selectResult}
+            onSetSaveScope={setActiveSaveScope}
+            onSetSidebarTab={setActiveSidebarTab}
+            savedQueries={savedQueries}
+            savedResults={savedResults}
           />
 
           <div
@@ -1114,42 +392,42 @@ export default function App() {
             aria-orientation="vertical"
             className="layout-resize-gutter"
             onKeyDown={(event) => {
-              if (event.target === event.currentTarget) resizeLayoutWithKeyboard(event, "x");
+              if (event.target === event.currentTarget) layout.resizeWithKeyboard(event, "x");
             }}
-            onPointerCancel={stopLayoutResize}
-            onPointerDown={(event) => startLayoutResize(event, "x")}
-            onPointerMove={resizeLayout}
-            onPointerUp={stopLayoutResize}
+            onPointerCancel={layout.stop}
+            onPointerDown={(event) => layout.start(event, "x")}
+            onPointerMove={layout.move}
+            onPointerUp={layout.stop}
             role="separator"
             tabIndex={0}
           >
             <button
               aria-label="Resize Saved Stuff, Query Results, and SQL Query panels"
               className="layout-resize-handle"
-              onDoubleClick={resetLayoutSize}
-              onKeyDown={(event) => resizeLayoutWithKeyboard(event, "both")}
-              onPointerCancel={stopLayoutResize}
-              onPointerDown={(event) => startLayoutResize(event, "both")}
-              onPointerMove={resizeLayout}
-              onPointerUp={stopLayoutResize}
+              onDoubleClick={layout.reset}
+              onKeyDown={(event) => layout.resizeWithKeyboard(event, "both")}
+              onPointerCancel={layout.stop}
+              onPointerDown={(event) => layout.start(event, "both")}
+              onPointerMove={layout.move}
+              onPointerUp={layout.stop}
               title="Drag to resize all three panels. Double-click to reset."
               type="button"
             />
           </div>
 
           <DataView
-            records={records}
-            recordColumns={recordColumns}
-            selectedRecord={selectedRecord}
-            isLoading={isLoading}
-            queryError={queryError}
-            queryOutput={queryOutput}
+            canLoadMore={Boolean(runner.result?.truncated && runner.lastRun && runner.lastRun.rowLimit < MAX_ROW_LIMIT)}
+            isLoading={runner.isLoading}
+            onCloseDetail={() => setSelectedIndex(null)}
+            onLoadMore={loadMore}
+            onSaveResult={() => setShowSaveResultModal(true)}
+            onSelectRow={(index) => setSelectedIndex((current) => (current === index ? null : index))}
+            queryError={runner.error}
+            queryOutput={runner.metaOutput}
             recordsTableRef={recordsTableRef}
-            onSelectRecord={selectRecord}
-            onSaveResult={promptSaveResult}
-            onCloseDetail={() => setSelectedRecord(null)}
-            prettyPrintJson={prettyPrintJson}
-            getValueType={getValueType}
+            result={runner.result}
+            resultSource={resultSource}
+            selectedIndex={selectedIndex}
           />
         </div>
 
@@ -1157,58 +435,76 @@ export default function App() {
           aria-label="Resize upper panels and SQL Query panel"
           aria-orientation="horizontal"
           className="layout-horizontal-resize-gutter"
-          onKeyDown={(event) => resizeLayoutWithKeyboard(event, "y")}
-          onPointerCancel={stopLayoutResize}
-          onPointerDown={(event) => startLayoutResize(event, "y")}
-          onPointerMove={resizeLayout}
-          onPointerUp={stopLayoutResize}
+          onKeyDown={(event) => layout.resizeWithKeyboard(event, "y")}
+          onPointerCancel={layout.stop}
+          onPointerDown={(event) => layout.start(event, "y")}
+          onPointerMove={layout.move}
+          onPointerUp={layout.stop}
           role="separator"
           tabIndex={0}
         />
 
         <QuerySection
           editorContainerRef={editorContainerRef}
-          commandAvailability={commandAvailability}
-          isLoading={isLoading}
-          isCommandQuery={isMetaCommandQuery(queryText)}
-          onSaveQuery={promptSaveQuery}
-          onAbortQuery={abortQuery}
+          isCommandQuery={isMetaCommand(queryText)}
+          isLoading={runner.isLoading}
+          onAbortQuery={runner.abort}
           onExecuteQuery={executeQuery}
+          onOpenFile={openSqlFile}
+          onSaveQuery={() => setShowSaveQueryModal(true)}
         />
       </div>
 
-      <SaveNameModal
-        show={showSaveQueryModal}
-        title="Save Query"
-        inputId="query-name"
-        label="Query Name"
-        value={queryNameInModal}
-        inputRef={queryNameInputRef}
-        onChange={setQueryNameInModal}
-        onClose={() => setShowSaveQueryModal(false)}
-        onSave={saveQueryConfirmed}
-      />
+      {connectionModal && (
+        <ConnectionModal
+          hasSavedPassword={connectionModal.hasSavedPassword}
+          initial={connectionModal.draft}
+          isEditing={connectionModal.isEditing}
+          onClose={() => setConnectionModal(null)}
+          onSave={saveConnection}
+          loadSavedPassword={() => getPassword(connectionModal.draft.id)}
+        />
+      )}
 
-      <SaveNameModal
-        show={showSaveResultModal}
-        title="Save Result"
-        inputId="result-name"
-        label="Result Name"
-        value={resultNameInModal}
-        inputRef={resultNameInputRef}
-        onChange={setResultNameInModal}
-        onClose={() => setShowSaveResultModal(false)}
-        onSave={saveResultConfirmed}
-      />
+      {showExportModal && (
+        <ExportModal
+          connectionCount={data.connections.length}
+          onClose={() => setShowExportModal(false)}
+          onExport={exportConnections}
+        />
+      )}
 
-      <ConfirmModal
-        show={Boolean(pendingDelete)}
-        title={deleteModalText.title}
-        message={deleteModalText.message}
-        confirmText="Delete"
-        onClose={() => setPendingDelete(null)}
-        onConfirm={confirmDelete}
-      />
+      {showSaveQueryModal && (
+        <SaveNameModal
+          inputId="query-name"
+          label="Query Name"
+          onClose={() => setShowSaveQueryModal(false)}
+          onSave={saveQueryConfirmed}
+          title="Save Query"
+        />
+      )}
+
+      {showSaveResultModal && (
+        <SaveNameModal
+          inputId="result-name"
+          label="Result Name"
+          onClose={() => setShowSaveResultModal(false)}
+          onSave={saveResultConfirmed}
+          title="Save Result"
+        />
+      )}
+
+      {pendingDelete && (
+        <ConfirmModal
+          confirmText="Delete"
+          message={deleteModalText.message}
+          onClose={() => setPendingDelete(null)}
+          onConfirm={confirmDelete}
+          title={deleteModalText.title}
+        />
+      )}
+
+      <Notices notices={notices} onDismiss={dismiss} />
     </div>
   );
 }

@@ -1,40 +1,58 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import type { QueryResult } from "../types/app";
+import { cellText, detailValue } from "../utils/format";
+import { CheckIcon, CloseIcon, CopyIcon, SearchIcon, WarningIcon } from "./icons";
 
-interface QueryOutput {
-  title: string;
+
+export interface MetaOutput {
   text: string;
 }
 
 interface DataViewProps {
-  records: any[];
-  recordColumns: string[];
-  selectedRecord: any | null;
+  result: QueryResult | null;
+  /** Name of the connection the result came from, shown when it differs from the active one. */
+  resultSource: string | null;
+  selectedIndex: number | null;
   isLoading: boolean;
-  queryError: Error | null;
-  queryOutput: QueryOutput | null;
+  queryError: string | null;
+  queryOutput: MetaOutput | null;
   recordsTableRef: RefObject<HTMLDivElement>;
-  onSelectRecord: (record: any) => void;
+  canLoadMore: boolean;
+  onSelectRow: (index: number) => void;
   onSaveResult: () => void;
   onCloseDetail: () => void;
-  prettyPrintJson: (value: any) => string;
-  getValueType: (value: any) => string;
+  onLoadMore: () => void;
 }
+
+/** Estimated row height in px; rows are single-line so this is exact in practice (measured anyway). */
+const ROW_HEIGHT = 42;
+const HEADER_HEIGHT = 50;
 
 const renderHighlightedText = (text: string, searchTerm: string): ReactNode => {
   if (!searchTerm) return text;
 
   const normalizedText = text.toLowerCase();
-  const normalizedTerm = searchTerm.toLowerCase();
+  // Lower-casing can change the length of some characters; then offsets no longer line up.
+  if (normalizedText.length !== text.length) return text;
+
   const segments: ReactNode[] = [];
   let currentIndex = 0;
-  let matchIndex = normalizedText.indexOf(normalizedTerm);
+  let matchIndex = normalizedText.indexOf(searchTerm);
 
   while (matchIndex !== -1) {
-    if (matchIndex > currentIndex) {
-      segments.push(text.slice(currentIndex, matchIndex));
-    }
+    if (matchIndex > currentIndex) segments.push(text.slice(currentIndex, matchIndex));
 
-    const matchEnd = matchIndex + normalizedTerm.length;
+    const matchEnd = matchIndex + searchTerm.length;
     segments.push(
       <mark className="search-match-highlight" key={`${matchIndex}-${matchEnd}`}>
         {text.slice(matchIndex, matchEnd)}
@@ -42,22 +60,14 @@ const renderHighlightedText = (text: string, searchTerm: string): ReactNode => {
     );
 
     currentIndex = matchEnd;
-    matchIndex = normalizedText.indexOf(normalizedTerm, currentIndex);
+    matchIndex = normalizedText.indexOf(searchTerm, currentIndex);
   }
 
-  if (currentIndex < text.length) {
-    segments.push(text.slice(currentIndex));
-  }
-
+  if (currentIndex < text.length) segments.push(text.slice(currentIndex));
   return segments;
 };
 
-interface SearchHighlightedCellProps {
-  searchTerm: string;
-  text: string;
-}
-
-function SearchHighlightedCell({ searchTerm, text }: SearchHighlightedCellProps) {
+function SearchHighlightedCell({ searchTerm, text }: { searchTerm: string; text: string }) {
   const cellRef = useRef<HTMLTableCellElement | null>(null);
   const [isMatchHidden, setIsMatchHidden] = useState(false);
 
@@ -85,7 +95,8 @@ function SearchHighlightedCell({ searchTerm, text }: SearchHighlightedCellProps)
       const rightPadding = Number.parseFloat(cellStyles.paddingRight) || 0;
       const visibleLeft = Math.max(cellRect.left + leftPadding, textRect.left);
       const visibleRight = Math.min(cellRect.right - rightPadding, textRect.right);
-      const isOverflowing = cell.scrollWidth > cell.clientWidth + 1 || textContent.scrollWidth > textContent.clientWidth + 1;
+      const isOverflowing =
+        cell.scrollWidth > cell.clientWidth + 1 || textContent.scrollWidth > textContent.clientWidth + 1;
 
       setIsMatchHidden(isOverflowing && (matchRect.left < visibleLeft || matchRect.right > visibleRight));
     };
@@ -102,7 +113,7 @@ function SearchHighlightedCell({ searchTerm, text }: SearchHighlightedCellProps)
   }, [isMatchHidden, searchTerm, text]);
 
   return (
-    <td className={`truncate ${isMatchHidden ? "search-hidden-match" : ""}`} ref={cellRef} title={text}>
+    <td className={`truncate ${isMatchHidden ? "search-hidden-match" : ""}`} ref={cellRef} title={text.length > 500 ? text.slice(0, 500) + "…" : text}>
       <span className="cell-clip">
         <span className="cell-text-content">{renderHighlightedText(text, searchTerm)}</span>
         {isMatchHidden && (
@@ -116,52 +127,83 @@ function SearchHighlightedCell({ searchTerm, text }: SearchHighlightedCellProps)
 }
 
 export function DataView({
-  records,
-  recordColumns,
-  selectedRecord,
+  result,
+  resultSource,
+  selectedIndex,
   isLoading,
   queryError,
   queryOutput,
   recordsTableRef,
-  onSelectRecord,
+  canLoadMore,
+  onSelectRow,
   onSaveResult,
   onCloseDetail,
-  prettyPrintJson,
-  getValueType,
+  onLoadMore,
 }: DataViewProps) {
   const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
-  const isSearching = isSearchVisible && normalizedSearchQuery.length > 0;
-  const isDetailViewOpen = Boolean(selectedRecord);
+  const columns = result?.columns ?? [];
+  const rows = useMemo(() => result?.rows ?? [], [result]);
+  const hasColumns = columns.length > 0;
 
-  const filteredRecords = useMemo(() => {
-    if (isDetailViewOpen || !isSearching) return records;
+  const typedSearch = isSearchVisible ? searchQuery.trim().toLowerCase() : "";
+  const searchTerm = useDeferredValue(typedSearch);
+  const isSearching = searchTerm.length > 0;
+  const isDetailViewOpen = selectedIndex !== null && selectedIndex < rows.length;
 
-    return records.filter((record) =>
-      Object.entries(record).some(([key, value]) => {
-        if (key.toLowerCase().includes(normalizedSearchQuery)) return true;
-        return prettyPrintJson(value).toLowerCase().includes(normalizedSearchQuery);
-      }),
-    );
-  }, [isDetailViewOpen, isSearching, normalizedSearchQuery, prettyPrintJson, records]);
+  // One lowercase string per row, built only when a search is actually used.
+  const searchIndex = useMemo(
+    () => (isSearching ? rows.map((row) => row.map((cell) => cellText(cell).toLowerCase()).join("\u0000")) : null),
+    [isSearching, rows],
+  );
+
+  /** Indexes (into result.rows) of the rows to show; null = all rows. */
+  const visibleRows = useMemo(() => {
+    if (isDetailViewOpen || !searchIndex) return null;
+    if (columns.some((column) => column.name.toLowerCase().includes(searchTerm))) return null;
+    const matches: number[] = [];
+    searchIndex.forEach((text, index) => text.includes(searchTerm) && matches.push(index));
+    return matches;
+  }, [columns, isDetailViewOpen, searchIndex, searchTerm]);
+
+  const rowCount = visibleRows ? visibleRows.length : rows.length;
 
   const detailEntries = useMemo(() => {
-    if (!selectedRecord) return [];
+    if (!isDetailViewOpen || selectedIndex === null) return [];
+    const row = rows[selectedIndex];
+    const entries = columns.map((column, index) => ({ column, value: row[index] ?? null }));
+    if (!isSearching) return entries;
+    return entries.filter(
+      ({ column, value }) =>
+        column.name.toLowerCase().includes(searchTerm) || cellText(value).toLowerCase().includes(searchTerm),
+    );
+  }, [columns, isDetailViewOpen, isSearching, rows, searchTerm, selectedIndex]);
 
-    const allEntries = Object.entries(selectedRecord);
-    if (!isSearching) return allEntries;
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => recordsTableRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+    scrollPaddingStart: HEADER_HEIGHT,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const paddingBottom = virtualItems.length > 0 ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end : 0;
 
-    return allEntries.filter(([key, value]) => {
-      if (key.toLowerCase().includes(normalizedSearchQuery)) return true;
-      return prettyPrintJson(value).toLowerCase().includes(normalizedSearchQuery);
-    });
-  }, [isSearching, normalizedSearchQuery, prettyPrintJson, selectedRecord]);
+  // Keep the selected row in view when it changes (j / k / arrows).
+  useEffect(() => {
+    if (selectedIndex === null) return;
+    const position = visibleRows ? visibleRows.indexOf(selectedIndex) : selectedIndex;
+    if (position >= 0) virtualizer.scrollToIndex(position, { align: "auto" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndex]);
 
-  const tableRows = isDetailViewOpen ? records : filteredRecords;
-  const displayedRecordCount = isDetailViewOpen ? records.length : filteredRecords.length;
+  // New result or new search => start at the top.
+  useEffect(() => {
+    recordsTableRef.current?.scrollTo({ top: 0 });
+  }, [result, searchTerm, recordsTableRef]);
 
   useEffect(() => {
     const openSearch = () => {
@@ -196,15 +238,15 @@ export function DataView({
     return () => window.removeEventListener("keydown", handleKeydown, true);
   }, [isSearchVisible]);
 
+  const displayedCount = isDetailViewOpen ? rows.length : rowCount;
+  const showTable = result !== null && hasColumns;
+
   return (
     <div className="content-area">
       {isSearchVisible && (
         <div className="floating-search">
           <div aria-hidden="true" className="search-input-icon">
-            <svg fill="none" viewBox="0 0 24 24">
-              <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2" />
-              <path d="m16 16 4 4" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
-            </svg>
+            <SearchIcon />
           </div>
           <input
             aria-label={isDetailViewOpen ? "Search in record details" : "Search in query results"}
@@ -219,7 +261,7 @@ export function DataView({
             type="search"
             value={searchQuery}
           />
-          <span className="search-shortcut-hint" aria-hidden="true">
+          <span aria-hidden="true" className="search-shortcut-hint">
             {navigator.userAgent.includes("Mac") ? "⌘F" : "Ctrl+F"}
           </span>
           <button
@@ -231,82 +273,117 @@ export function DataView({
             }}
             type="button"
           >
-            <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
-              <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
-            </svg>
+            <CloseIcon />
           </button>
         </div>
       )}
       <div className="data-view">
-        <div className={`table-section ${selectedRecord ? "with-detail" : ""}`}>
+        <div className={`table-section ${isDetailViewOpen ? "with-detail" : ""}`}>
           <div className="table-header">
-            <h3>Query Results</h3>
+            <h3>
+              Query Results
+              {resultSource ? <span className="result-source">from {resultSource}</span> : null}
+            </h3>
             <div className="table-header-tools">
-              {records.length > 0 && (
-                <button className="button save-button" onClick={onSaveResult} type="button">Save Results</button>
+              {showTable && rows.length > 0 && (
+                <button className="button save-button" onClick={onSaveResult} type="button">
+                  Save Results
+                </button>
               )}
-              {records.length > 0 && (
-                <span className="record-count">{displayedRecordCount} records</span>
+              {showTable && (
+                <span className="record-count">
+                  {displayedCount.toLocaleString()} record{displayedCount === 1 ? "" : "s"}
+                </span>
               )}
             </div>
           </div>
 
+          {showTable && result.truncated && !isLoading && (
+            <div className="truncation-banner" role="status">
+              <span>
+                Showing the first {rows.length.toLocaleString()} rows. There are more.
+              </span>
+              {canLoadMore && (
+                <button className="button save-button" onClick={onLoadMore} type="button">
+                  Load more
+                </button>
+              )}
+            </div>
+          )}
+
           {isLoading ? (
-            <div className="loading-state"><div className="spinner"></div><p>Executing query...</p></div>
+            <div className="loading-state">
+              <div className="spinner"></div>
+              <p>Executing query...</p>
+            </div>
           ) : queryOutput ? (
             <div className="command-output-state">
-              <svg aria-hidden="true" className="command-output-icon" fill="none" viewBox="0 0 24 24">
-                <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-              </svg>
-              <h4>{queryOutput.title}</h4>
+              <CheckIcon className="command-output-icon" />
+              <h4>Meta Command Output</h4>
               <pre>{queryOutput.text}</pre>
             </div>
           ) : queryError ? (
             <div className="error-state">
-              <svg aria-hidden="true" className="error-icon" fill="none" viewBox="0 0 24 24">
-                <path
-                  d="M12 3 2.6 19.5h18.8L12 3Z"
-                  stroke="currentColor"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                />
-                <path d="M12 9v5" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
-                <circle cx="12" cy="16.5" fill="currentColor" r="1" />
-              </svg>
+              <WarningIcon className="error-icon" />
               <h4>Query Error</h4>
-              <p>{queryError.message}</p>
+              <p>{queryError}</p>
+            </div>
+          ) : result && !hasColumns ? (
+            <div className="command-output-state">
+              <CheckIcon className="command-output-icon" />
+              <h4>Done</h4>
+              <pre>{result.message ?? "Statement executed"}</pre>
             </div>
           ) : (
             <div className="records-table" ref={recordsTableRef}>
               <table>
                 <thead>
                   <tr>
-                    {records.length > 0 ? (
-                      recordColumns.map((column) => (
-                        <th key={column}>{renderHighlightedText(column, normalizedSearchQuery)}</th>
-                      ))
+                    {hasColumns ? (
+                      columns.map((column, index) => <th key={index}>{renderHighlightedText(column.name, searchTerm)}</th>)
                     ) : (
                       <th>No Data</th>
                     )}
                   </tr>
                 </thead>
                 <tbody>
-                  {tableRows.length > 0 ? (
-                    tableRows.map((record, index) => (
-                      <tr className={`record-row ${selectedRecord === record ? "active" : ""}`} key={index} onClick={() => onSelectRecord(record)}>
-                        {Object.values(record).map((value, valueIndex) => (
-                          <SearchHighlightedCell
-                            key={`${index}-${valueIndex}`}
-                            searchTerm={normalizedSearchQuery}
-                            text={String(value)}
-                          />
-                        ))}
-                      </tr>
-                    ))
+                  {rowCount > 0 ? (
+                    <>
+                      {paddingTop > 0 && (
+                        <tr aria-hidden="true" className="virtual-spacer" style={{ height: paddingTop }}>
+                          <td colSpan={columns.length} />
+                        </tr>
+                      )}
+                      {virtualItems.map((item) => {
+                        const rowIndex = visibleRows ? visibleRows[item.index] : item.index;
+                        const row = rows[rowIndex];
+                        return (
+                          <tr
+                            className={`record-row ${selectedIndex === rowIndex ? "active" : ""}`}
+                            data-index={item.index}
+                            key={rowIndex}
+                            onClick={() => onSelectRow(rowIndex)}
+                            ref={virtualizer.measureElement}
+                          >
+                            {columns.map((_, cellIndex) => (
+                              <SearchHighlightedCell
+                                key={cellIndex}
+                                searchTerm={searchTerm}
+                                text={cellText(row[cellIndex] ?? null)}
+                              />
+                            ))}
+                          </tr>
+                        );
+                      })}
+                      {paddingBottom > 0 && (
+                        <tr aria-hidden="true" className="virtual-spacer" style={{ height: paddingBottom }}>
+                          <td colSpan={columns.length} />
+                        </tr>
+                      )}
+                    </>
                   ) : (
                     <tr>
-                      <td className="no-data" colSpan={100}>
+                      <td className="no-data" colSpan={Math.max(columns.length, 1)}>
                         <div className="empty-table">
                           <p>{isSearching && !isDetailViewOpen ? "No matching records found" : "No records found"}</p>
                         </div>
@@ -319,62 +396,50 @@ export function DataView({
           )}
         </div>
 
-        <div className={`detail-view ${selectedRecord ? "visible" : ""}`}>
+        <div className={`detail-view ${isDetailViewOpen ? "visible" : ""}`}>
           <div className="detail-header">
             <h4>Record Details</h4>
-            <button className="close-detail" onClick={onCloseDetail} type="button">X</button>
+            <button aria-label="Close details" className="close-detail" onClick={onCloseDetail} type="button">
+              X
+            </button>
           </div>
-          {selectedRecord ? (
+          {isDetailViewOpen ? (
             <div className="detail-content">
-              {detailEntries.length > 0 ? detailEntries.map(([key, value]) => {
-                const valueType = getValueType(value);
-                const valueText = prettyPrintJson(value);
-                const copyText = valueType === "json" ? valueText : String(value);
+              {detailEntries.length > 0 ? (
+                detailEntries.map(({ column, value }, index) => {
+                  const detail = detailValue(column.type, value);
 
-                return (
-                  <div className="detail-item" key={key}>
-                    <div className="detail-key"><span className="key-name">{renderHighlightedText(key, normalizedSearchQuery)}</span><span className={`key-type ${valueType}`}>{valueType}</span></div>
-                    <div className="value-container">
-                      <pre className={`value-content ${valueType}`}>{renderHighlightedText(valueText, normalizedSearchQuery)}</pre>
-                      <button
-                        aria-label="Copy value"
-                        className="copy-button"
-                        onClick={() => navigator.clipboard.writeText(copyText)}
-                        title="Copy value"
-                        type="button"
-                      >
-                        <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 24 24" width="14">
-                          <rect
-                            height="13"
-                            rx="2"
-                            ry="2"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            width="13"
-                            x="9"
-                            y="9"
-                          />
-                          <rect
-                            height="13"
-                            rx="2"
-                            ry="2"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            width="13"
-                            x="2"
-                            y="2"
-                          />
-                        </svg>
-                      </button>
+                  return (
+                    <div className="detail-item" key={index}>
+                      <div className="detail-key">
+                        <span className="key-name">{renderHighlightedText(column.name, searchTerm)}</span>
+                        <span className={`key-type ${detail.kind}`}>{detail.label}</span>
+                      </div>
+                      <div className="value-container">
+                        <pre className={`value-content ${detail.kind}`}>{renderHighlightedText(detail.text, searchTerm)}</pre>
+                        <button
+                          aria-label="Copy value"
+                          className="copy-button"
+                          onClick={() => navigator.clipboard.writeText(detail.copyText)}
+                          title="Copy value"
+                          type="button"
+                        >
+                          <CopyIcon />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              }) : (
-                <div className="detail-placeholder"><p>No matching fields in this record</p></div>
+                  );
+                })
+              ) : (
+                <div className="detail-placeholder">
+                  <p>No matching fields in this record</p>
+                </div>
               )}
             </div>
           ) : (
-            <div className="detail-placeholder"><p>Select a record to view details</p></div>
+            <div className="detail-placeholder">
+              <p>Select a record to view details</p>
+            </div>
           )}
         </div>
       </div>

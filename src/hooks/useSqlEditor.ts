@@ -1,81 +1,105 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type * as Monaco from "monaco-editor/esm/vs/editor/editor.api";
-import { LanguageIdEnum, vsPlusTheme } from "monaco-sql-languages";
-import "monaco-sql-languages/esm/languages/flink/flink.contribution";
-import "monaco-sql-languages/esm/languages/hive/hive.contribution";
-import "monaco-sql-languages/esm/languages/impala/impala.contribution";
-import "monaco-sql-languages/esm/languages/mysql/mysql.contribution";
-import "monaco-sql-languages/esm/languages/pgsql/pgsql.contribution";
-import "monaco-sql-languages/esm/languages/spark/spark.contribution";
-import "monaco-sql-languages/esm/languages/trino/trino.contribution";
+import type { DbType } from "../types/app";
 
+/**
+ * Mounts a Monaco editor in `editorContainerRef`.
+ * `initialValue` is only read once; use `editorRef.current?.setValue()` to replace the text.
+ */
 export function useSqlEditor(
-  queryText: string,
-  setQueryText: (value: string) => void,
-  onExecuteQuery: () => void,
+  initialValue: string,
+  dbType: DbType,
+  onChange: (value: string) => void,
+  onExecute: () => void,
 ) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
+  const languageForRef = useRef<((dbType: DbType) => string) | null>(null);
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
-  const onExecuteQueryRef = useRef(onExecuteQuery);
+  const onExecuteRef = useRef(onExecute);
+  const onChangeRef = useRef(onChange);
+  const initialValueRef = useRef(initialValue);
+  const dbTypeRef = useRef(dbType);
 
   useEffect(() => {
-    onExecuteQueryRef.current = onExecuteQuery;
-  }, [onExecuteQuery]);
+    onExecuteRef.current = onExecute;
+    onChangeRef.current = onChange;
+    dbTypeRef.current = dbType;
+  });
 
   useEffect(() => {
     let resizeObserver: ResizeObserver | null = null;
     let disposed = false;
+    let editor: Monaco.editor.IStandaloneCodeEditor | null = null;
 
-    const initEditor = async () => {
+    const init = async () => {
       const container = editorContainerRef.current;
       if (!container) return;
 
-      const monaco = (await import("../lib/monaco")).default;
+      const { default: monaco, languageFor, SQL_DARK_THEME } = await import("../lib/monaco");
       if (disposed) return;
       monacoRef.current = monaco;
+      languageForRef.current = languageFor;
 
-      monaco.editor.defineTheme("sql-dark", vsPlusTheme.darkThemeData);
-      const editor = monaco.editor.create(container, {
+      editor = monaco.editor.create(container, {
         lineNumbers: "off",
         minimap: { enabled: false },
         automaticLayout: false,
-        theme: "sql-dark",
+        theme: SQL_DARK_THEME,
         scrollbar: { vertical: "hidden", verticalSliderSize: 0, verticalScrollbarSize: 0 },
-        language: LanguageIdEnum.FLINK,
+        language: languageFor(dbTypeRef.current),
         lineDecorationsWidth: "0px",
-        find: undefined,
+        contextmenu: false,
         wordWrap: "on",
         lineNumbersMinChars: 0,
         padding: { top: 5, bottom: 5 },
         renderLineHighlight: "none",
-        value: queryText,
+        value: initialValueRef.current,
         fontSize: 15,
       });
 
-      editor.onDidChangeModelContent(() => setQueryText(editor.getValue()));
-      const executeQueryCommand = () => onExecuteQueryRef.current();
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, executeQueryCommand);
-      editor.addCommand(monaco.KeyMod.WinCtrl | monaco.KeyCode.Enter, executeQueryCommand);
-      resizeObserver = new ResizeObserver(() => editor.layout());
+      editor.onDidChangeModelContent(() => onChangeRef.current(editor!.getValue()));
+      const run = () => onExecuteRef.current();
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, run);
+      editor.addCommand(monaco.KeyMod.WinCtrl | monaco.KeyCode.Enter, run);
+      resizeObserver = new ResizeObserver(() => editor?.layout());
       resizeObserver.observe(container);
       editorRef.current = editor;
     };
 
-    initEditor();
+    init().catch((error) => console.error("Failed to start the SQL editor.", error));
 
     return () => {
       disposed = true;
       resizeObserver?.disconnect();
-      monacoRef.current?.editor.getModels().forEach((model) => model.dispose());
-      editorRef.current?.dispose();
+      // Dispose only what this hook created (not every model in the page).
+      editor?.getModel()?.dispose();
+      editor?.dispose();
       editorRef.current = null;
       monacoRef.current = null;
     };
   }, []);
 
-  return {
-    editorRef,
-    editorContainerRef,
-  };
+  // Switch the SQL dialect when the active connection changes.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const languageFor = languageForRef.current;
+    const model = editor?.getModel();
+    if (monaco && languageFor && model) monaco.editor.setModelLanguage(model, languageFor(dbType));
+  }, [dbType]);
+
+  /** Replace the whole text but keep it undoable (Ctrl+Z brings the previous query back). */
+  const replaceText = useCallback((text: string) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    editor.pushUndoStop();
+    editor.executeEdits("open-file", [{ range: model.getFullModelRange(), text }]);
+    editor.pushUndoStop();
+    editor.setPosition({ lineNumber: 1, column: 1 });
+    editor.revealLine(1);
+  }, []);
+
+  return { editorRef, editorContainerRef, replaceText };
 }
