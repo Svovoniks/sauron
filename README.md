@@ -7,9 +7,11 @@
 Sauron is an app for searching the database (currently only Postgres and ClickHouse are supported) so mostly just running selects and showing results in a pretty format
 
 ## Run on Mac
- - install the app
- - run "xattr -cr /Applications/sauron.app" to disable signature verification (it says that the app is damaged without this command);
-   releases are not signed yet
+ - install the app (drag it to Applications)
+ - the first time, macOS says it cannot verify the developer: open System Settings -> Privacy & Security, scroll down and press
+   "Open Anyway" (on older macOS: right-click the app -> Open)
+ - releases are signed ad hoc, not with an Apple Developer ID (that costs $99/year), so this one-time step is expected.
+   If macOS says the app is "damaged" instead, run `xattr -cr /Applications/sauron.app` once
 
 ## Some cool features:
  - formatting json in results
@@ -58,4 +60,4 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
  - only the last statement of a script shows its result; earlier statements are executed and their results discarded
  - "Read-only" uses the database's own read-only mode (`default_transaction_read_only` / `readonly=2`), which a script can
    switch off again; for real protection connect with a database role that only has SELECT rights
- - releases are not code signed
+ - releases are signed ad hoc and not notarized, so macOS asks you to confirm the first start (see above); Windows may show a SmartScreen warning
