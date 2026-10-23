@@ -6,3 +6,6 @@
 @import "./styles/query-section.css";
 @import "./styles/responsive.css";
 @import "./styles/extras.css";
+@import "./styles/settings.css";
+@import "./styles/states.css";
+@import "./styles/chrome.css";

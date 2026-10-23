@@ -17,6 +17,7 @@
         "height": 800,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
+        "dragDropEnabled": false,
         "trafficLightPosition": {
           "x": 14,
           "y": 18
@@ -40,6 +41,15 @@
     ],
     "macOS": {
       "signingIdentity": "-"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU5MjZFQjAyRTAwRDc4MkQKUldRdGVBM2dBdXNtNlpMS2dsbGlML3dRekUxNHU4dUt0aDcxS1gvQzJjQi9KYm5GOHFVeUh6WEcK",
+      "endpoints": [
+        "https://github.com/Svovoniks/sauron/releases/latest/download/latest.json"
+      ]
     }
   }
 }

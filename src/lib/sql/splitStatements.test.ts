@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { splitSqlStatements } from "./splitStatements";
+import { splitSqlRanges, splitSqlStatements } from "./splitStatements";
 
 const pg = (sql: string) => splitSqlStatements(sql, "postgres");
 const ch = (sql: string) => splitSqlStatements(sql, "clickhouse");
@@ -301,5 +301,18 @@ describe("mixed scripts", () => {
       expect(() => pg(s)).not.toThrow();
       expect(() => ch(s)).not.toThrow();
     }
+  });
+});
+
+describe("splitSqlRanges", () => {
+  test("offsets point at the trimmed statement text", () => {
+    const sql = "  select 1 ;\n\n-- note\nselect ';' from t;  \nselect 3";
+    const ranges = splitSqlRanges(sql, "postgres");
+    expect(ranges.map((r) => sql.slice(r.start, r.end))).toEqual(ranges.map((r) => r.text));
+    expect(ranges.map((r) => r.text)).toEqual(["select 1", "-- note\nselect ';' from t", "select 3"]);
+  });
+  test("agrees with splitSqlStatements", () => {
+    const sql = "select $$a;b$$; select 2;; select 3";
+    expect(splitSqlRanges(sql, "postgres").map((r) => r.text)).toEqual(splitSqlStatements(sql, "postgres"));
   });
 });

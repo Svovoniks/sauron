@@ -80,3 +80,46 @@ impl QueryResult {
         }
     }
 }
+
+/// Why one statement of a script failed. `code` is the SQLSTATE (Postgres) or "CH <n>" (ClickHouse),
+/// `position` the 1-based character offset in that statement when the server reports one.
+#[derive(Serialize, Debug, Default)]
+pub struct StatementError {
+    pub message: String,
+    pub code: Option<String>,
+    pub position: Option<u32>,
+}
+
+impl From<String> for StatementError {
+    fn from(message: String) -> Self {
+        StatementError {
+            message,
+            ..Default::default()
+        }
+    }
+}
+
+/// What one statement of a script produced; a script stops at the first failing statement.
+#[derive(Serialize, Debug)]
+pub struct StatementOutcome {
+    pub sql: String,
+    pub elapsed_ms: u64,
+    pub result: Option<QueryResult>,
+    pub error: Option<StatementError>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct TestStep {
+    pub name: String,
+    pub ok: bool,
+    pub detail: String,
+    pub ms: u64,
+}
+
+/// Outcome of "Test connection": every step that ran, the last one failing when `ok` is false.
+#[derive(Serialize, Debug)]
+pub struct TestReport {
+    pub ok: bool,
+    pub steps: Vec<TestStep>,
+    pub server_version: Option<String>,
+}

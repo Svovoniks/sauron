@@ -1,11 +1,20 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import type { SavedQuery, SavedResult } from "../types/app";
+import { comboText } from "../lib/settings";
 import { GripIcon, RefreshIcon, TrashIcon } from "./icons";
 
 export type SaveScope = "local" | "global";
+export type SidebarMode = "saved" | "history" | "schema";
 type ItemType = "query" | "result";
 
 interface SidebarProps {
+  mode: SidebarMode;
+  onSetMode: (mode: SidebarMode) => void;
+  /** Panels for the History and Schema modes. */
+  historyPanel: ReactNode;
+  schemaPanel: ReactNode;
+  /** Shortcut hint for the empty "no saved queries" state. */
+  saveShortcut: string;
   activeSaveScope: SaveScope;
   activeSidebarTab: "queries" | "results";
   savedQueries: SavedQuery[];
@@ -58,6 +67,10 @@ function SavedItem({
   return (
     <div
       className={`query-item ${active ? "active" : ""} ${dragging ? "dragging" : ""}`}
+      onClick={(event) => {
+        // The whole card opens the item; its own buttons (reorder, delete, overwrite) keep their job.
+        if (!(event.target as HTMLElement).closest("button")) onSelect();
+      }}
       onMouseEnter={onReorderHover}
       onMouseUp={onStopReorder}
     >
@@ -101,6 +114,11 @@ function SavedItem({
 }
 
 export function Sidebar({
+  mode,
+  onSetMode,
+  historyPanel,
+  schemaPanel,
+  saveShortcut,
   activeSaveScope,
   activeSidebarTab,
   savedQueries,
@@ -139,66 +157,91 @@ export function Sidebar({
 
   return (
     <div className="sidebar">
-      <div className="sidebar-header">
-        <h3>Saved Stuff</h3>
-        <div className="sidebar-toggle sidebar-scope-toggle">
-          <button className={activeSaveScope === "local" ? "active" : ""} onClick={() => onSetSaveScope("local")} type="button">
-            Local
+      <div className="sidebar-modes" role="tablist">
+        {(["saved", "history", "schema"] as const).map((m) => (
+          <button aria-selected={mode === m} className={mode === m ? "active" : ""} key={m} onClick={() => onSetMode(m)} role="tab" type="button">
+            {m === "saved" ? "Saved" : m === "history" ? "History" : "Schema"}
           </button>
-          <button className={activeSaveScope === "global" ? "active" : ""} onClick={() => onSetSaveScope("global")} type="button">
-            Global
-          </button>
-        </div>
+        ))}
       </div>
-      <div className="sidebar-controls">
-        <div className="sidebar-toggle">
-          <button className={activeSidebarTab === "queries" ? "active" : ""} onClick={() => onSetSidebarTab("queries")} type="button">
-            Queries
-          </button>
-          <button className={activeSidebarTab === "results" ? "active" : ""} onClick={() => onSetSidebarTab("results")} type="button">
-            Results
-          </button>
-        </div>
-      </div>
-      <div className="query-list">
-        {activeSidebarTab === "queries"
-          ? savedQueries.map((query) => (
-              <SavedItem
-                active={query.id === activeQueryId}
-                dragging={draggingItem?.id === query.id}
-                id={query.id}
-                key={query.id}
-                name={query.name}
-                onDelete={() => onDeleteQuery(query)}
-                onOverwrite={() => onOverwriteQuery(query)}
-                onReorderHover={() => handleReorderHover(query.id, "query")}
-                onSelect={() => onSelectQuery(query)}
-                onStartReorder={(event) => startReorder(event, query.id, "query")}
-                onStopReorder={() => setDraggingItem(null)}
-                overwriteTitle="Overwrite with current query"
-                preview={query.query.length > 50 ? `${query.query.substring(0, 50)}...` : query.query}
-                type="query"
-              />
-            ))
-          : savedResults.map((result) => (
-              <SavedItem
-                active={result.id === activeResultId}
-                dragging={draggingItem?.id === result.id}
-                id={result.id}
-                key={result.id}
-                name={result.name}
-                onDelete={() => onDeleteResult(result)}
-                onOverwrite={() => onOverwriteResult(result)}
-                onReorderHover={() => handleReorderHover(result.id, "result")}
-                onSelect={() => onSelectResult(result)}
-                onStartReorder={(event) => startReorder(event, result.id, "result")}
-                onStopReorder={() => setDraggingItem(null)}
-                overwriteTitle="Overwrite with current query and results"
-                preview={`${result.rows.length} records${result.truncated ? " (truncated)" : ""}`}
-                type="result"
-              />
-            ))}
-      </div>
+      {mode === "history" ? historyPanel : mode === "schema" ? schemaPanel : (
+        <>
+          <div className="sidebar-header">
+            <h3>Saved Stuff</h3>
+            <div className="sidebar-toggle sidebar-scope-toggle">
+              <button className={activeSaveScope === "local" ? "active" : ""} onClick={() => onSetSaveScope("local")} type="button">
+                Local
+              </button>
+              <button className={activeSaveScope === "global" ? "active" : ""} onClick={() => onSetSaveScope("global")} type="button">
+                Global
+              </button>
+            </div>
+          </div>
+          <div className="sidebar-controls">
+            <div className="sidebar-toggle">
+              <button className={activeSidebarTab === "queries" ? "active" : ""} onClick={() => onSetSidebarTab("queries")} type="button">
+                Queries
+              </button>
+              <button className={activeSidebarTab === "results" ? "active" : ""} onClick={() => onSetSidebarTab("results")} type="button">
+                Results
+              </button>
+            </div>
+          </div>
+          <div className="query-list">
+            {activeSidebarTab === "queries" && savedQueries.length === 0 ? (
+              <div className="sidebar-empty">
+                <b>No saved queries yet</b>
+                <span>
+                  Write a query and press <kbd>{comboText(saveShortcut)}</kbd>. Local queries belong to this connection, Global ones to all of them.
+                </span>
+              </div>
+            ) : null}
+            {activeSidebarTab === "results" && savedResults.length === 0 ? (
+              <div className="sidebar-empty">
+                <b>No saved results yet</b>
+                <span>Run a query and use “Save Results” to keep a snapshot of the table, even after the data changes.</span>
+              </div>
+            ) : null}
+            {activeSidebarTab === "queries"
+              ? savedQueries.map((query) => (
+                  <SavedItem
+                    active={query.id === activeQueryId}
+                    dragging={draggingItem?.id === query.id}
+                    id={query.id}
+                    key={query.id}
+                    name={query.name}
+                    onDelete={() => onDeleteQuery(query)}
+                    onOverwrite={() => onOverwriteQuery(query)}
+                    onReorderHover={() => handleReorderHover(query.id, "query")}
+                    onSelect={() => onSelectQuery(query)}
+                    onStartReorder={(event) => startReorder(event, query.id, "query")}
+                    onStopReorder={() => setDraggingItem(null)}
+                    overwriteTitle="Overwrite with current query"
+                    preview={query.query.length > 50 ? `${query.query.substring(0, 50)}...` : query.query}
+                    type="query"
+                  />
+                ))
+              : savedResults.map((result) => (
+                  <SavedItem
+                    active={result.id === activeResultId}
+                    dragging={draggingItem?.id === result.id}
+                    id={result.id}
+                    key={result.id}
+                    name={result.name}
+                    onDelete={() => onDeleteResult(result)}
+                    onOverwrite={() => onOverwriteResult(result)}
+                    onReorderHover={() => handleReorderHover(result.id, "result")}
+                    onSelect={() => onSelectResult(result)}
+                    onStartReorder={(event) => startReorder(event, result.id, "result")}
+                    onStopReorder={() => setDraggingItem(null)}
+                    overwriteTitle="Overwrite with current query and results"
+                    preview={`${result.rows.length} records${result.truncated ? " (truncated)" : ""}`}
+                    type="result"
+                  />
+                ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

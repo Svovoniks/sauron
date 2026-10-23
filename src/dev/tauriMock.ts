@@ -1,5 +1,5 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { QueryResult } from "../types/app";
+import type { QueryResult, StatementOutcome } from "../types/app";
 
 /**
  * Development only (see main.tsx): fake backend so the UI can be exercised in a plain browser
@@ -43,9 +43,124 @@ const sampleResult = (rowLimit: number): QueryResult => {
   };
 };
 
+const rowsResult = (names: string[], rows: (string | null)[][]): QueryResult => ({
+  columns: names.map((name) => ({ name, type: "string" })),
+  rows,
+  truncated: false,
+  message: null,
+});
+
+const TABLES: [string, string, string, string][] = [
+  ["customers", "r", "14", "49152"],
+  ["orders", "r", "1200000", "327155712"],
+  ["order_items", "r", "4800000", "1181116006"],
+  ["products", "r", "3410", "2097152"],
+  ["invoices", "p", "88000", "22020096"],
+  ["refunds", "r", "2904", "655360"],
+];
+const COLUMNS: Record<string, [string, string, string][]> = {
+  customers: [["id", "bigint", "false"], ["name", "text", "true"], ["email", "text", "true"], ["plan", "text", "true"], ["seats", "integer", "true"], ["active", "boolean", "false"], ["created_at", "timestamp with time zone", "false"]],
+  orders: [["id", "bigint", "false"], ["customer_id", "bigint", "false"], ["status", "order_status", "false"], ["total", "numeric(12,2)", "false"], ["created_at", "timestamp with time zone", "false"]],
+  order_items: [["id", "bigint", "false"], ["order_id", "bigint", "false"], ["product_id", "bigint", "false"], ["qty", "integer", "false"], ["price", "numeric(12,2)", "false"]],
+  products: [["id", "bigint", "false"], ["sku", "text", "false"], ["title", "text", "false"], ["price", "numeric(12,2)", "false"]],
+  invoices: [["id", "bigint", "false"], ["customer_id", "bigint", "false"], ["due_date", "date", "true"], ["status", "text", "false"]],
+  refunds: [["id", "bigint", "false"], ["order_id", "bigint", "false"], ["amount", "numeric(12,2)", "false"], ["reason", "text", "true"]],
+};
+
+/** Catalog queries of the schema explorer (see lib/schema.ts) are answered from the tables above. */
+function catalogResult(sql: string): QueryResult | null {
+  if (/from pg_class c join pg_namespace n on n\.oid = c\.relnamespace where c\.relkind/.test(sql)) {
+    return rowsResult(["nspname", "relname", "relkind", "reltuples", "size"], [...TABLES.map(([n, k, r, b]): (string | null)[] => ["public", n, k, r, b]), ["public", "active_customers", "v", "-1", null]]);
+  }
+  if (sql.includes("from pg_attribute a")) {
+    const rows = Object.entries(COLUMNS).flatMap(([table, cols]) => cols.map(([c, t, nullable]) => ["public", table, c, t, nullable]));
+    return rowsResult(["nspname", "relname", "attname", "type", "nullable"], rows);
+  }
+  if (sql.includes("from pg_constraint")) {
+    return rowsResult(["nspname", "relname", "attname", "contype"], [["public", "customers", "id", "p"], ["public", "orders", "id", "p"], ["public", "orders", "customer_id", "f"], ["public", "order_items", "order_id", "f"]]);
+  }
+  if (sql.includes("from pg_proc p")) {
+    return rowsResult(["nspname", "proname", "args", "result"], [["public", "customer_ltv", "customer_id bigint", "numeric"], ["public", "refresh_rollups", "", "void"]]);
+  }
+  return null;
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** A few connections and saved queries so the UI is not empty (add ?empty to the URL for the first-run screen). */
+function seed() {
+  const conn = (id: string, name: string, host: string, env: string, read_only: boolean, db_type = "postgres") => ({
+    id, name, host, port: db_type === "postgres" ? "5432" : "8123", username: "dev", database: "shop_dev", db_type, ssl_mode: "require", read_only, timeout_secs: 60, env,
+  });
+  files.set(
+    "connections",
+    JSON.stringify({
+      version: 2,
+      activeConnectionId: "local",
+      connections: [
+        conn("local", "local", "127.0.0.1", "local", false),
+        conn("staging", "staging", "pg.staging.internal", "staging", true),
+        conn("prod", "prod-replica", "pg-replica.prod.internal", "prod", false),
+        conn("events", "events", "ch.prod.internal", "prod", true, "clickhouse"),
+      ],
+    }),
+  );
+  files.set(
+    "queries",
+    JSON.stringify({
+      version: 2,
+      byScope: {
+        local: [
+          { id: "q1", name: "active paying customers", query: "select id, name, email, plan, seats\nfrom customers\nwhere active and plan <> 'free'\norder by seats desc;" },
+          { id: "q2", name: "orders by status", query: "select status, count(*), sum(total)\nfrom orders\ngroup by 1\norder by 2 desc;" },
+        ],
+      },
+    }),
+  );
+  passwords.set("local", "dev");
+}
+
+const params = new URLSearchParams(location.search);
+
+async function runScript(steps: string[]) {
+  await sleep(1800);
+  for (const step of steps) {
+    const sep = step.indexOf(":");
+    const kind = step.slice(0, sep);
+    const arg = step.slice(sep + 1);
+    if (kind === "click" || kind === "rclick") {
+      const el = document.querySelector<HTMLElement>(arg);
+      if (el) el.dispatchEvent(new MouseEvent(kind === "rclick" ? "contextmenu" : "click", { bubbles: true, cancelable: true, button: kind === "rclick" ? 2 : 0 }));
+    } else if (kind === "key") {
+      const parts = arg.split("+");
+      const key = parts[parts.length - 1];
+      const mods = parts.slice(0, -1);
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: mods.includes("Mod"), shiftKey: mods.includes("Shift"), altKey: mods.includes("Alt"), bubbles: true }));
+    } else if (kind === "css") {
+      const style = document.createElement("style");
+      style.textContent = arg;
+      document.head.appendChild(style);
+    } else if (kind === "type") {
+      const [selector, text] = arg.split("=");
+      const el = document.querySelector<HTMLInputElement>(selector);
+      if (el) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(el, text);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    } else if (kind === "wait") await sleep(Number(arg));
+    await sleep(700);
+  }
+}
+
 export function installDevMock() {
+  if (!params.has("empty")) seed();
+  // ?settings={"theme":"forest"} pre-seeds settings.json, handy for looking at one theme without clicking through Settings.
+  const settings = params.get("settings");
+  if (settings) files.set("settings", settings);
+  // ?autorun presses Mod+Enter once the UI is up so a screenshot has a result table in it.
+  // ?script=click:.sel|key:Mod+k|wait:500|type:.sel=abc replays UI steps (one per 700 ms) so a screenshot can show any state.
+  const script = params.get("script");
+  if (script) void runScript(script.split("|"));
   mockIPC(async (cmd, payload) => {
     const args = (payload ?? {}) as Record<string, unknown>;
     switch (cmd) {
@@ -102,12 +217,89 @@ export function installDevMock() {
           ].join("\n"),
         };
       }
+      case "check_for_update":
+        await sleep(600);
+        // add ?update to the URL to see the update dialog in the browser
+        return new URLSearchParams(location.search).has("update")
+          ? { version: "9.9.9", current_version: "0.3.1", notes: "## What's new\n- Settings, query tabs, schema explorer\n- Auto update", date: "2026-10-23 10:00:00.0 +00:00:00" }
+          : null;
+      case "install_update":
+        await sleep(1500);
+        return null;
+      case "restart_app":
+        return null;
+      case "storage_dir":
+        return "/Users/demo/Library/Application Support/com.svovoniks.sauron";
+      case "test_connection": {
+        const connection = args.connection as { host: string };
+        await sleep(400);
+        if (/^bad/.test(connection.host)) {
+          return { ok: false, server_version: null, steps: [{ name: "Resolve host", ok: false, detail: "no such host (failed to lookup address)", ms: 12 }] };
+        }
+        return {
+          ok: true,
+          server_version: "PostgreSQL 16.4",
+          steps: [
+            { name: "Resolve host", ok: true, detail: "127.0.0.1", ms: 2 },
+            { name: "Open TCP connection", ok: true, detail: "port 5432", ms: 3 },
+            { name: "Encrypt and log in", ok: true, detail: "TLS, certificate not checked", ms: 41 },
+            { name: "Server version", ok: true, detail: "PostgreSQL 16.4", ms: 2 },
+            { name: "Read-only mode", ok: true, detail: "on", ms: 0 },
+          ],
+        };
+      }
+      case "execute_script": {
+        cancelled = false;
+        const statements = args.statements as string[];
+        const rowLimit = args.rowLimit as number;
+        const outcomes: StatementOutcome[] = [];
+        for (const sql of statements) {
+          const started = Date.now();
+          const catalog = catalogResult(sql);
+          if (catalog) {
+            outcomes.push({ sql, elapsed_ms: 3, result: catalog, error: null });
+            continue;
+          }
+          if (sql.includes("sleep") || params.has("slow")) {
+            for (let i = 0; i < (params.has("slow") ? 1200 : 100) && !cancelled; i++) await sleep(100);
+            if (cancelled) throw "Query was cancelled";
+          }
+          await sleep(120);
+          const fail = (message: string, code: string, position: number | null) =>
+            outcomes.push({ sql, elapsed_ms: Date.now() - started, result: null, error: { message, code, position } });
+          if (sql.includes("create_at")) {
+            fail('ERROR: column "create_at" does not exist\nHINT: Perhaps you meant to reference the column "customers.created_at".', "42703", sql.indexOf("create_at") + 1);
+            break;
+          }
+          if (sql.includes("timeout")) {
+            fail("ERROR: canceling statement due to statement timeout", "57014", null);
+            break;
+          }
+          if (sql.includes("offline")) throw "error connecting to server: Connection refused (os error 61)";
+          if (sql.includes("boom")) {
+            fail('ERROR: relation "boom" does not exist', "42P01", sql.indexOf("boom") + 1);
+            break;
+          }
+          if (sql.includes("response_body")) {
+            outcomes.push({ sql, elapsed_ms: 5, error: null, result: rowsResult(["id", "response_body"], [["1", '{"event_response":{"event_id":"01a167c1","status":1,"time":{"seconds":1792742124},"simplified_status":1}}']]) });
+            continue;
+          }
+          const write = /^\s*(update|insert|delete)/i.test(sql);
+          const result = write || sql.includes("ddl")
+            ? { columns: [], rows: [], truncated: false, message: write ? "3 rows affected" : "Statement executed" }
+            : sql.includes("empty")
+              ? { columns: [{ name: "a", type: "number" }, { name: "b", type: "string" }], rows: [], truncated: false, message: null }
+              : sampleResult(rowLimit);
+          outcomes.push({ sql, elapsed_ms: Date.now() - started, result, error: null });
+        }
+        return outcomes;
+      }
       case "execute_query": {
         cancelled = false;
         const statements = args.statements as string[];
         const sql = statements.join(";\n");
-        if (sql.includes("sleep")) {
-          for (let i = 0; i < 100 && !cancelled; i++) await sleep(100);
+        if (sql.includes("sleep") || params.has("slow")) {
+          for (let i = 0; i < (params.has("slow") ? 1200 : 100) && !cancelled; i++) await sleep(100);
           if (cancelled) throw "Query was cancelled";
         }
         await sleep(150);

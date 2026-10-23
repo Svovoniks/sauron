@@ -4,9 +4,11 @@ interface ExportModalProps {
   connectionCount: number;
   onClose: () => void;
   onExport: (includePasswords: boolean) => void;
+  /** Settings → Data & privacy: passwords are the default choice. */
+  passwordsByDefault?: boolean;
 }
 
-export function ExportModal({ connectionCount, onClose, onExport }: ExportModalProps) {
+export function ExportModal({ connectionCount, onClose, onExport, passwordsByDefault = false }: ExportModalProps) {
   return (
     <Modal onClose={onClose} title="Export">
       <div className="modal-form">
@@ -23,7 +25,7 @@ export function ExportModal({ connectionCount, onClose, onExport }: ExportModalP
           <button className="button cancel-button" onClick={onClose} type="button">
             Cancel
           </button>
-          <button className="button save-button" onClick={() => onExport(false)} type="button">
+          <button className={`button ${passwordsByDefault && connectionCount > 0 ? "cancel-button" : "save-button"}`} onClick={() => onExport(false)} type="button">
             Without passwords
           </button>
           {connectionCount > 0 && (

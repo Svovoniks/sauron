@@ -7,10 +7,11 @@ interface SaveNameModalProps {
   label: string;
   onClose: () => void;
   onSave: (name: string) => void;
+  initialValue?: string;
 }
 
-export function SaveNameModal({ title, inputId, label, onClose, onSave }: SaveNameModalProps) {
-  const [name, setName] = useState("");
+export function SaveNameModal({ title, inputId, label, onClose, onSave, initialValue = "" }: SaveNameModalProps) {
+  const [name, setName] = useState(initialValue);
 
   return (
     <Modal onClose={onClose} title={title}>
@@ -23,7 +24,7 @@ export function SaveNameModal({ title, inputId, label, onClose, onSave }: SaveNa
       >
         <div className="form-group">
           <label htmlFor={inputId}>{label}</label>
-          <input autoFocus id={inputId} onChange={(event) => setName(event.target.value)} type="text" value={name} />
+          <input autoFocus id={inputId} onFocus={(event) => event.target.select()} onChange={(event) => setName(event.target.value)} type="text" value={name} />
         </div>
         <div className="modal-buttons">
           <button className="button cancel-button" onClick={onClose} type="button">

@@ -26,9 +26,42 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
  - connections are **read-only by default** and have a query timeout; Postgres connections can use TLS
  - results are capped (5,000 rows by default, "Load more" fetches more), so a big table does not freeze the app
 
+## Everyday workflow
+ - **Settings** (`Cmd/Ctrl+,` or the gear): accent colour, editor font / size / wrap / line numbers, what Execute runs, row limit, row
+   density, zebra stripes, row numbers, how NULL is shown, defaults for new connections, the production guard, the `psql` binary,
+   rebindable shortcuts, history retention. Changes apply immediately and are saved automatically
+ - **Connection tabs** show a status dot, a lock for read-only, an environment tag (local / staging / prod) and a `...` menu: edit,
+   duplicate, test, copy the URL (never the password), set the environment, make read-only, delete. `Cmd/Ctrl+O` switches connection,
+   `Cmd/Ctrl+1..9` jumps to one. A **prod** connection gets a red marker and asks you to type its name before any write
+ - **Command palette** (`Cmd/Ctrl+K`): actions, connections (`@`), tabs, saved queries, tables (`#`) and every setting (`>` for commands only)
+ - **Query tabs** (`Cmd/Ctrl+T` new, `Cmd/Ctrl+Shift+W` close; `Cmd+W` is left to macOS, it closes the window). Each tab keeps its own SQL,
+   undo history, connection and results. Tabs are restored on the next start (Settings -> General)
+ - **Scripts**: every statement gets its own result tab plus a Messages log; a script stops at the first error. Execute runs the whole
+   script (or the statement at the cursor, see Settings -> Editor); `Cmd/Ctrl+Shift+Enter` always runs everything, `Cmd/Ctrl+Alt+Enter` explains
+   the statement at the cursor, a selection is always run on its own
+ - **History** (sidebar tab): every run with its connection, time, duration and rows; filter, search, put back in the editor, run again,
+   save as a query. `Alt+Cmd/Ctrl+Left/Right` steps through earlier runs. Only SQL text is stored, never results
+ - **Schema** (sidebar tab): tables, views and functions with row estimates, columns with types and keys; click a column to insert it, double-click a
+   table to read it. The editor completes table and column names (it understands aliases: `o.` after `join orders o`)
+ - **Record view**: JSON as a collapsible tree, arrays as tags, timestamps with "3 weeks ago", filter fields, hide nulls, pin a row and
+   Compare with another (`j` / `k` keep comparing), copy as JSON or INSERT
+ - **Errors point at the problem**: the failing statement is underlined in the editor, with the SQLSTATE, a caret snippet, "did you mean ...?" for
+   a mistyped table or column, and timeout / disconnect / read-only explanations with the next step. `Cmd/Ctrl+.` cancels a running query
+
+## Updates
+ - Sauron checks GitHub releases once at launch (Settings -> General -> "Check for updates automatically") and asks before it downloads
+   anything: *Download & install*, *Later* or *Skip this version*, then *Restart now*. Settings -> About has a "Check for updates" button
+ - updates are verified with a signing key: the public half is in `src-tauri/tauri.conf.json`, the private half must be set as the GitHub
+   Actions secret `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, empty if the key has no password), otherwise the
+   release workflow cannot sign the update bundles. Generate a new pair with `bunx tauri signer generate -w ~/.tauri/sauron-updater.key`
+   (and put the new public key in `tauri.conf.json`); never commit the private key
+ - the updater reads `latest.json` from the *latest published* release, so it only sees a release after you publish the draft;
+   versions released before this feature existed have to be updated by hand once
+
 ## Where is my data?
  - connections, saved queries and saved results are JSON files in the app data directory
-   (macOS: `~/Library/Application Support/com.svovoniks.sauron/`)
+   (macOS: `~/Library/Application Support/com.svovoniks.sauron/`); settings, query history and your open tabs are `settings.json`,
+   `history.json` and `session.json` next to them. Settings -> Data & privacy shows the folder and clears the history
  - passwords are stored in the system keychain (macOS Keychain, Windows Credential Manager, Secret Service on Linux),
    never in those files. Export asks whether to include them: "Include passwords" writes them into the JSON in **plain text**
    (import puts them back into the keychain). In the connection form the eye icon shows the saved password
@@ -57,7 +90,8 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
    permissions. Do not execute backslash commands from saved queries or export files you did not write or read. The connection's
    read-only / timeout settings still apply to SQL sent through psql, but a psql script can switch them off
  - the sql query editor is a piece of vs code, so some vs code shortcuts still work (the command palette and "go to line" are removed)
- - only the last statement of a script shows its result; earlier statements are executed and their results discarded
+ - a script stops at its first failing statement, later ones are not run. Inside `BEGIN ... COMMIT` rows are read without a cursor, so a huge select there is held in memory before the row limit applies
+ - there is no light theme and no built-in demo database yet
  - "Read-only" uses the database's own read-only mode (`default_transaction_read_only` / `readonly=2`), which a script can
    switch off again; for real protection connect with a database role that only has SELECT rights
  - releases are signed ad hoc and not notarized, so macOS asks you to confirm the first start (see above); Windows may show a SmartScreen warning

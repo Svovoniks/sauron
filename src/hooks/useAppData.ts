@@ -103,8 +103,8 @@ export function useAppData(notify: Notify) {
   }, [flush]);
 
   // --- connections -------------------------------------------------------------------------
-  /** Returns false (and tells the user) when the password could not be stored. */
-  const saveConnection = useCallback(async (draft: ConnectionDraft): Promise<boolean> => {
+  /** Returns the connection id, or null (after telling the user) when the password could not be stored. */
+  const saveConnection = useCallback(async (draft: ConnectionDraft): Promise<string | null> => {
     const { password, ...rest } = draft;
     const connection: Connection = { ...rest, id: rest.id || crypto.randomUUID() };
     if (password !== "") {
@@ -112,11 +112,11 @@ export function useAppData(notify: Notify) {
         await savePassword(connection.id, password);
       } catch (error) {
         notifyRef.current("error", errorText(error));
-        return false;
+        return null;
       }
     }
     setData((current) => upsertConnection(current, connection));
-    return true;
+    return connection.id;
   }, []);
 
   const deleteConnection = useCallback((id: string) => {

@@ -25,6 +25,7 @@ const conn = (id: string): Connection => ({
   ssl_mode: "require",
   read_only: true,
   timeout_secs: 0,
+  env: "",
 });
 const query = (id: string) => ({ id, name: id, query: `select '${id}'` });
 

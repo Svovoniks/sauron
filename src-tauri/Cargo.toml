@@ -1,6 +1,6 @@
 [package]
 name = "sauron"
-version = "0.3.1"
+version = "0.4.0"
 description = "database query app"
 authors = ["svovoniks"]
 edition = "2021"
@@ -29,3 +29,4 @@ postgres-native-tls = "0.5"
 reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
 uuid = { version = "1", features = ["v4"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "vendored"] }
+tauri-plugin-updater = "~2.9"

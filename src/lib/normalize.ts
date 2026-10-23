@@ -4,6 +4,8 @@ import {
   type ColumnMeta,
   type Connection,
   type DbType,
+  type Env,
+  ENVS,
   type SavedQuery,
   type SavedResult,
   type SslMode,
@@ -69,6 +71,7 @@ export function normalizeConnection(raw: unknown): { connection: Connection; leg
     ssl_mode,
     read_only: typeof raw.read_only === "boolean" ? raw.read_only : false,
     timeout_secs,
+    env: typeof raw.env === "string" && (ENVS as readonly string[]).includes(raw.env) ? (raw.env as Env) : "",
   };
 
   const legacyPassword = typeof raw.password === "string" && raw.password !== "" ? raw.password : null;

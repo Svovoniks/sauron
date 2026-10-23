@@ -147,16 +147,22 @@ async fn run_with_binary(
     }))
 }
 
+/// `custom_path`: the binary chosen in Settings. When set it is the only one tried.
 pub async fn execute(
     conn: &ConnectionParams,
     password: &str,
     command_text: &str,
     guard: &Guard<'_>,
+    custom_path: Option<&str>,
 ) -> Result<String, PsqlError> {
     let outcome = guard
         .run(async {
             let mut tried = Vec::new();
-            for candidate in psql_candidates() {
+            let candidates = match custom_path.map(str::trim).filter(|p| !p.is_empty()) {
+                Some(path) => vec![path.to_string()],
+                None => psql_candidates(),
+            };
+            for candidate in candidates {
                 match run_with_binary(&candidate, conn, password, command_text).await {
                     Err(PsqlError::NotInstalled(message)) => tried.push(message),
                     other => return Ok(other),
@@ -195,7 +201,7 @@ mod integration_tests {
     async fn run(c: &ConnectionParams, text: &str) -> Result<String, String> {
         let registry = Registry::default();
         let guard = registry.begin();
-        match execute(c, "", text, &guard).await {
+        match execute(c, "", text, &guard, None).await {
             Ok(out) => Ok(out),
             Err(PsqlError::Failed(m)) | Err(PsqlError::NotInstalled(m)) => Err(m),
         }
