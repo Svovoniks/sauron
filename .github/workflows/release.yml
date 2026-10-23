@@ -29,9 +29,9 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest' # for Arm based macs (M1 and above).
-            args: '--target aarch64-apple-darwin'
+            args: '--target aarch64-apple-darwin --config src-tauri/tauri.codesign.conf.json'
           - platform: 'macos-latest' # for Intel based macs.
-            args: '--target x86_64-apple-darwin'
+            args: '--target x86_64-apple-darwin --config src-tauri/tauri.codesign.conf.json'
           - platform: 'ubuntu-22.04'
             args: ''
           - platform: 'windows-latest'
@@ -61,6 +61,29 @@ jobs:
 
       - name: install frontend dependencies
         run: bun install --frozen-lockfile
+
+      # Sign the macOS app with a fixed self-signed certificate instead of ad-hoc ("-"). An ad-hoc signature changes with every
+      # build, so macOS asks for the keychain password again after each update; a fixed certificate keeps "Always Allow" working.
+      # Secrets: MACOS_CODESIGN_P12 (base64 of the .p12) and MACOS_CODESIGN_P12_PASSWORD. See "macOS keychain prompts" in the README.
+      - name: import code-signing certificate (macOS only)
+        if: matrix.platform == 'macos-latest'
+        env:
+          P12_BASE64: ${{ secrets.MACOS_CODESIGN_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CODESIGN_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KC="$RUNNER_TEMP/sauron-sign.keychain-db"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/sauron.p12"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p ci "$KC"
+          security import "$RUNNER_TEMP/sauron.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          # codesign only accepts identities that are trusted for code signing, and a self-signed one is not until we say so
+          security find-certificate -c "Sauron Self-Signed" -p "$KC" > "$RUNNER_TEMP/sauron-cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/sauron-cert.pem"
+          security find-identity -v -p codesigning | grep "Sauron Self-Signed"
 
       - uses: tauri-apps/tauri-action@v0.5.23
         env:
