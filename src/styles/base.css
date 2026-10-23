@@ -5,6 +5,20 @@
 }
 
 :root {
+  /* Theme tokens: lib/themes.ts sets all of them at runtime (Settings -> Theme). These are only what the
+     first paint needs; the rest of the palette (Midnight) is applied before React renders. */
+  --bg-app: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+  --text: #e2e8f0;
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --rs: 1;
+  --r-panel: 16px;
+  --accent: #3b82f6;
+  --accent-strong: #1d4ed8;
+  --accent-soft: #60a5fa;
+  --accent-rgb: 59, 130, 246;
+  --accent-strong-rgb: 29, 78, 216;
+  --cell-pad-y: 12px;
+  --editor-font-size: 15px;
   --titlebar-drag-height: 38px;
   --layout-gap: 10px;
   --app-inline-padding: 10px;
@@ -18,9 +32,9 @@ body {
 }
 
 body {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
-  color: #e2e8f0;
+  font-family: var(--font-ui);
+  background: var(--bg-app);
+  color: var(--text);
 }
 
 .app-container {
@@ -29,7 +43,7 @@ body {
   flex-direction: column;
   padding: var(--titlebar-drag-height) var(--app-inline-padding) var(--app-bottom-padding);
   gap: var(--layout-gap);
-  background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+  background: var(--bg-app);
   position: relative;
 }
 
@@ -101,8 +115,8 @@ body {
   position: absolute;
   inset: 6px;
   border-radius: 50%;
-  background: #64748b;
-  border: 1px solid rgba(148, 163, 184, 0.75);
+  background: var(--handle-bg);
+  border: 1px solid var(--handle-border);
   box-shadow:
     0 0 0 2px rgba(100, 116, 139, 0.12),
     0 0 4px rgba(15, 23, 42, 0.55);
@@ -113,7 +127,7 @@ body {
 .layout-resize-handle:focus-visible::before,
 .resizing-layout .layout-resize-handle::before {
   inset: 5px;
-  background: #94a3b8;
+  background: var(--handle-hover);
   box-shadow:
     0 0 0 3px rgba(100, 116, 139, 0.16),
     0 0 5px rgba(15, 23, 42, 0.65);
@@ -139,4 +153,18 @@ body {
 .resizing-layout-y * {
   cursor: row-resize !important;
   user-select: none !important;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  -webkit-text-fill-color: initial !important;
+}
+
+.workspace-layout[hidden] {
+  display: none;
 }

@@ -13,6 +13,7 @@ import "monaco-editor/esm/vs/basic-languages/sql/sql.contribution";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 
 import type { DbType } from "../types/app";
+import type { MonacoThemeData } from "./themes";
 
 (self as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
   getWorker: () => new editorWorker(),
@@ -20,23 +21,16 @@ import type { DbType } from "../types/app";
 
 export const languageFor = (dbType: DbType): string => (dbType === "postgres" ? "pgsql" : "sql");
 
-export const SQL_DARK_THEME = "sql-dark";
-
-// VS Code "Dark+" colours on top of the built-in dark theme.
-monaco.editor.defineTheme(SQL_DARK_THEME, {
-  base: "vs-dark",
-  inherit: true,
-  rules: [
-    { token: "comment", foreground: "6a9955" },
-    { token: "keyword", foreground: "569cd6" },
-    { token: "number", foreground: "b5cea8" },
-    { token: "string", foreground: "ce9178" },
-    { token: "predefined", foreground: "dcdcaa" },
-    { token: "type", foreground: "4ec9b0" },
-    { token: "identifier", foreground: "9cdcfe" },
-    { token: "operator", foreground: "d4d4d4" },
-  ],
-  colors: {},
-});
+/** Registers (or re-registers) a theme from lib/themes.ts and makes it the active one for every editor. */
+export function applyEditorTheme(theme: MonacoThemeData): string {
+  monaco.editor.defineTheme(theme.name, {
+    base: theme.base,
+    inherit: true,
+    rules: theme.rules.map((rule) => ({ token: rule.token, foreground: rule.foreground })),
+    colors: theme.colors,
+  });
+  monaco.editor.setTheme(theme.name);
+  return theme.name;
+}
 
 export default monaco;

@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use postgres_native_tls::MakeTlsConnector;
-use tokio_postgres::error::SqlState;
+use tokio_postgres::error::{ErrorPosition, SqlState};
 use tokio_postgres::types::{Kind, Type};
 use tokio_postgres::{Client, Config, SimpleQueryMessage, SimpleQueryRow};
 
 use crate::cancel::{Guard, Killer};
-use crate::model::{ColumnMeta, ConnectionParams, QueryResult, SslMode, CANCELLED};
+use crate::model::{ColumnMeta, ConnectionParams, QueryResult, SslMode, StatementError, StatementOutcome, CANCELLED};
 
 const CURSOR_NAME: &str = "sauron_cursor";
 
@@ -147,10 +147,105 @@ async fn run_statements(
             .map_err(|e| describe_error_ro(e, read_only))?;
     }
 
-    let prepared = client
-        .prepare(last)
+    run_one(client, last, row_limit, read_only, false)
         .await
-        .map_err(|e| describe_error_ro(e, read_only))?;
+        .map_err(|e| e.message)
+}
+
+/// Run a whole script in one session and report every statement separately. Stops at the first error.
+pub async fn execute_script(
+    conn: &ConnectionParams,
+    password: &str,
+    statements: &[String],
+    row_limit: usize,
+    guard: &Guard<'_>,
+) -> Result<Vec<StatementOutcome>, String> {
+    if statements.is_empty() {
+        return Err("No SQL statements to execute".to_string());
+    }
+    guard
+        .run(async {
+            let client = connect_session(conn, password, guard).await?;
+            let mut outcomes = Vec::with_capacity(statements.len());
+            let mut in_transaction = false;
+            for statement in statements {
+                let started = std::time::Instant::now();
+                let outcome = run_one(&client, statement, row_limit, conn.read_only, in_transaction).await;
+                in_transaction = transaction_state_after(statement, in_transaction);
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                match outcome {
+                    Ok(result) => outcomes.push(StatementOutcome {
+                        sql: statement.clone(),
+                        elapsed_ms,
+                        result: Some(result),
+                        error: None,
+                    }),
+                    Err(error) => {
+                        outcomes.push(StatementOutcome {
+                            sql: statement.clone(),
+                            elapsed_ms,
+                            result: None,
+                            error: Some(error),
+                        });
+                        break;
+                    }
+                }
+            }
+            Ok(outcomes)
+        })
+        .await
+}
+
+/// Does a statement open or close an explicit transaction? (Row fetching must not use its own
+/// BEGIN / ROLLBACK inside the user's transaction: that would undo their work.)
+pub fn transaction_state_after(statement: &str, in_transaction: bool) -> bool {
+    let words: Vec<String> = statement
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+        .take(4)
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let keyword = first_keyword(statement);
+    match keyword.as_str() {
+        "begin" | "start" => true,
+        "commit" | "end" if !words.iter().any(|w| w == "prepared") => false,
+        "abort" => false,
+        "rollback" if words.iter().any(|w| w == "prepared") => in_transaction,
+        "rollback" if words.iter().any(|w| w == "to") => in_transaction,
+        "rollback" => false,
+        _ => in_transaction,
+    }
+}
+
+fn statement_error(error: tokio_postgres::Error, read_only: bool) -> StatementError {
+    let (code, position) = match error.as_db_error() {
+        Some(db) => (
+            Some(db.code().code().to_string()),
+            match db.position() {
+                Some(ErrorPosition::Original(position)) => Some(*position),
+                _ => None,
+            },
+        ),
+        None => (None, None),
+    };
+    StatementError {
+        message: describe_error_ro(error, read_only),
+        code,
+        position,
+    }
+}
+
+async fn run_one(
+    client: &Client,
+    statement: &str,
+    row_limit: usize,
+    read_only: bool,
+    in_transaction: bool,
+) -> Result<QueryResult, StatementError> {
+    let prepared = client
+        .prepare(statement)
+        .await
+        .map_err(|e| statement_error(e, read_only))?;
 
     let columns: Vec<(ColumnMeta, Type)> = prepared
         .columns()
@@ -168,19 +263,19 @@ async fn run_statements(
 
     if columns.is_empty() {
         let messages = client
-            .simple_query(&terminated(last))
+            .simple_query(&terminated(statement))
             .await
-            .map_err(|e| describe_error_ro(e, read_only))?;
-        return Ok(QueryResult::message(command_message(last, &messages)));
+            .map_err(|e| statement_error(e, read_only))?;
+        return Ok(QueryResult::message(command_message(statement, &messages)));
     }
 
-    let (rows, truncated) = if starts_like_query(last) {
-        fetch_via_cursor(client, last, row_limit, read_only).await?
+    let (rows, truncated) = if starts_like_query(statement) && !in_transaction {
+        fetch_via_cursor(client, statement, row_limit, read_only).await?
     } else {
         let messages = client
-            .simple_query(&terminated(last))
+            .simple_query(&terminated(statement))
             .await
-            .map_err(|e| describe_error_ro(e, read_only))?;
+            .map_err(|e| statement_error(e, read_only))?;
         collect_rows(messages)
     };
 
@@ -211,11 +306,11 @@ async fn fetch_via_cursor(
     statement: &str,
     row_limit: usize,
     read_only: bool,
-) -> Result<(Vec<SimpleQueryRow>, bool), String> {
+) -> Result<(Vec<SimpleQueryRow>, bool), StatementError> {
     client
         .batch_execute("BEGIN")
         .await
-        .map_err(|e| describe_error_ro(e, read_only))?;
+        .map_err(|e| statement_error(e, read_only))?;
 
     let declare = format!(
         "DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR\n{}\n",
@@ -227,16 +322,16 @@ async fn fetch_via_cursor(
             let messages = client
                 .simple_query(&terminated(statement))
                 .await
-                .map_err(|e| describe_error_ro(e, read_only))?;
+                .map_err(|e| statement_error(e, read_only))?;
             return Ok(collect_rows(messages));
         }
-        return Err(describe_error_ro(e, read_only));
+        return Err(describe_error_ro(e, read_only).into());
     }
 
     let fetch = format!("FETCH FORWARD {} FROM {CURSOR_NAME}", row_limit.saturating_add(1));
     let messages = client.simple_query(&fetch).await;
     let _ = client.batch_execute("ROLLBACK").await;
-    Ok(collect_rows(messages.map_err(|e| describe_error_ro(e, read_only))?))
+    Ok(collect_rows(messages.map_err(|e| statement_error(e, read_only))?))
 }
 
 fn collect_rows(messages: Vec<SimpleQueryMessage>) -> (Vec<SimpleQueryRow>, bool) {
@@ -405,6 +500,19 @@ mod tests {
     }
 
     #[test]
+    fn explicit_transactions_are_tracked() {
+        assert!(transaction_state_after("BEGIN", false));
+        assert!(transaction_state_after("start transaction isolation level serializable", false));
+        assert!(!transaction_state_after("commit", true));
+        assert!(!transaction_state_after("END;", true));
+        assert!(!transaction_state_after("rollback", true));
+        assert!(transaction_state_after("rollback to savepoint a", true));
+        assert!(transaction_state_after("select 1", true));
+        assert!(!transaction_state_after("select 1", false));
+        assert!(transaction_state_after("commit prepared 'x'", true));
+    }
+
+    #[test]
     fn cursor_is_only_used_for_plain_queries() {
         assert!(starts_like_query("select * from t"));
         assert!(starts_like_query("WITH x AS (SELECT 1) SELECT * FROM x"));
@@ -457,6 +565,90 @@ mod integration_tests {
         let guard = registry.begin();
         let statements: Vec<String> = sql.iter().map(|s| s.to_string()).collect();
         execute(conn, "", &statements, limit, &guard).await
+    }
+
+    async fn script(conn: &ConnectionParams, sql: &[&str], limit: usize) -> Result<Vec<StatementOutcome>, String> {
+        let registry = Registry::default();
+        let guard = registry.begin();
+        let statements: Vec<String> = sql.iter().map(|s| s.to_string()).collect();
+        execute_script(conn, "", &statements, limit, &guard).await
+    }
+
+    #[tokio::test]
+    async fn script_reports_every_statement_in_one_session() {
+        let Some(c) = conn("disable", false, 0) else { return };
+        let out = script(
+            &c,
+            &["create temp table sc(a int)", "insert into sc values (1), (2), (3)", "select * from sc order by a", "update sc set a = a + 1 where a > 1"],
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.len(), 4);
+        assert!(out.iter().all(|o| o.error.is_none()));
+        // the temp table created by statement 1 is visible to the later ones: one session
+        assert_eq!(out[1].result.as_ref().unwrap().message.as_deref(), Some("3 rows affected"));
+        assert_eq!(out[2].result.as_ref().unwrap().rows.len(), 3);
+        assert_eq!(out[3].result.as_ref().unwrap().message.as_deref(), Some("2 rows affected"));
+    }
+
+    #[tokio::test]
+    async fn script_stops_at_the_first_error_and_reports_its_position() {
+        let Some(c) = conn("disable", true, 0) else { return };
+        let out = script(&c, &["select 1", "select id, nme from t", "select 3"], 10).await.unwrap();
+        assert_eq!(out.len(), 2, "the statement after the failing one is not run");
+        assert!(out[0].error.is_none());
+        let error = out[1].error.as_ref().unwrap();
+        assert_eq!(error.code.as_deref(), Some("42703"));
+        assert_eq!(error.position, Some("select id, nme from t".find("nme").unwrap() as u32 + 1));
+        assert!(error.message.contains("nme"));
+    }
+
+    #[tokio::test]
+    async fn script_keeps_the_users_transaction_when_reading_rows() {
+        let Some(c) = conn("disable", false, 0) else { return };
+        // A select inside BEGIN must not be wrapped in its own BEGIN/ROLLBACK (that would undo the insert).
+        let out = script(
+            &c,
+            &["create temp table tx(a int)", "begin", "insert into tx values (1)", "select * from tx", "commit", "select count(*) from tx"],
+            100,
+        )
+        .await
+        .unwrap();
+        assert!(out.iter().all(|o| o.error.is_none()), "{:?}", out.iter().map(|o| &o.error).collect::<Vec<_>>());
+        assert_eq!(out[3].result.as_ref().unwrap().rows.len(), 1);
+        assert_eq!(out[5].result.as_ref().unwrap().rows[0][0].as_deref(), Some("1"), "the insert survived the select");
+    }
+
+    #[tokio::test]
+    async fn script_row_limit_applies_per_statement() {
+        let Some(c) = conn("disable", true, 0) else { return };
+        let out = script(&c, &["select * from t order by id", "select 1"], 50).await.unwrap();
+        let first = out[0].result.as_ref().unwrap();
+        assert_eq!(first.rows.len(), 50);
+        assert!(first.truncated);
+        assert!(!out[1].result.as_ref().unwrap().truncated);
+    }
+
+    #[tokio::test]
+    async fn test_connection_reports_each_step() {
+        let Some(c) = conn("disable", true, 0) else { return };
+        let registry = Registry::default();
+        let guard = registry.begin();
+        let report = crate::test_connection::run(&c, "", &guard).await;
+        assert!(report.ok, "{:?}", report.steps);
+        let names: Vec<_> = report.steps.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Resolve host", "Open TCP connection", "Encrypt and log in", "Server version", "Read-only mode"]);
+        assert!(report.server_version.unwrap().starts_with("PostgreSQL"));
+
+        let mut bad = c.clone();
+        bad.port = "1".to_string();
+        let registry = Registry::default();
+        let guard = registry.begin();
+        let report = crate::test_connection::run(&bad, "", &guard).await;
+        assert!(!report.ok);
+        assert_eq!(report.steps.last().unwrap().name, "Open TCP connection");
+        assert!(!report.steps.last().unwrap().ok);
     }
 
     #[tokio::test]

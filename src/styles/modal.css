@@ -2,9 +2,9 @@
   position: relative;
   display: flex;
   width: 100%;
-  background: rgba(15, 15, 35, 0.8);
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: var(--field-bg);
+  border-radius: calc(10px * var(--rs));
+  border: 1px solid var(--edge);
   overflow: hidden;
 }
 
@@ -15,8 +15,8 @@
   left: 0;
   width: 50%;
   height: 100%;
-  background: #3b82f6;
-  border-radius: 10px;
+  background: var(--accent);
+  border-radius: calc(10px * var(--rs));
   transition: transform 0.3s ease;
   transform: translateX(0);
 }
@@ -30,7 +30,7 @@
   padding: 10px;
   border: none;
   background: transparent;
-  color: #e2e8f0;
+  color: var(--text);
   cursor: pointer;
   position: relative;
   z-index: 1;
@@ -53,10 +53,10 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: #e2e8f0;
+  color: var(--text);
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: calc(6px * var(--rs));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -68,12 +68,12 @@
 }
 
 .password-toggle:hover {
-  color: #f8fafc;
-  background: rgba(148, 163, 184, 0.18);
+  color: var(--text-strong);
+  background: var(--hover-strong);
 }
 
 .password-toggle:focus-visible {
-  outline: 2px solid #60a5fa;
+  outline: 2px solid var(--accent-soft);
   outline-offset: 2px;
 }
 
@@ -92,24 +92,24 @@
 }
 
 .modal {
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  background: var(--modal-bg);
   padding: 32px;
-  border-radius: 16px;
+  border-radius: var(--r-panel);
   display: flex;
   flex-direction: column;
   gap: 24px;
   width: 480px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-modal);
 }
 
 .modal h3 {
   text-align: center;
   font-size: 24px;
   font-weight: 700;
-  color: #f1f5f9;
+  color: var(--text-strong);
   margin: 0;
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  background: var(--accent-fill);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -125,7 +125,7 @@
   margin: 0;
   font-size: 15px;
   line-height: 1.5;
-  color: #cbd5e1;
+  color: var(--text);
   text-align: center;
 }
 
@@ -138,7 +138,7 @@
 .form-group label {
   font-size: 14px;
   font-weight: 600;
-  color: #94a3b8;
+  color: var(--dim);
 }
 
 .host-port-group {
@@ -153,19 +153,19 @@
 
 .modal input {
   padding: 14px 18px;
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background: rgba(15, 15, 35, 0.8);
-  color: #e2e8f0;
+  border-radius: calc(10px * var(--rs));
+  border: 1px solid var(--edge);
+  background: var(--field-bg);
+  color: var(--text);
   font-size: 16px;
   transition: all 0.3s ease;
 }
 
 .modal input:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
-  background: rgba(15, 15, 35, 1);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.15);
+  background: var(--field-bg-solid);
 }
 
 .modal-buttons {
@@ -176,23 +176,225 @@
 }
 
 .cancel-button {
-  background: rgba(239, 68, 68, 0.15);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: color-mix(in srgb, var(--err) 15%, transparent);
+  color: var(--err);
+  border: 1px solid color-mix(in srgb, var(--err) 30%, transparent);
 }
 
 .cancel-button:hover {
-  background: rgba(239, 68, 68, 0.25);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--err) 25%, transparent);
+  transform: translateY(calc(var(--lift) / 2));
 }
 
 .delete-button {
-  background: rgba(239, 68, 68, 0.85);
+  background: color-mix(in srgb, var(--err) 85%, transparent);
   color: #fff;
-  border: 1px solid rgba(239, 68, 68, 0.95);
+  border: 1px solid color-mix(in srgb, var(--err) 95%, transparent);
 }
 
 .delete-button:hover {
-  background: rgba(239, 68, 68, 1);
-  transform: translateY(-1px);
+  background: var(--err);
+  transform: translateY(calc(var(--lift) / 2));
+}
+
+/* --- connection form ------------------------------------------------------------------- */
+.modal.connection-modal {
+  width: 560px;
+  max-height: 94vh;
+  overflow-y: auto;
+  gap: 14px;
+  padding: 24px 28px;
+  scrollbar-width: none;
+}
+
+.connection-modal .modal-form {
+  gap: 14px;
+}
+
+.url-paste {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: calc(10px * var(--rs));
+  background: var(--field-bg);
+  color: var(--dim);
+}
+
+.url-paste.ok {
+  border-style: solid;
+  border-color: var(--ok);
+}
+
+.url-paste.bad {
+  border-color: color-mix(in srgb, var(--warn) 60%, transparent);
+}
+
+.modal .url-paste input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  font: 12.5px "Monaco", "Menlo", monospace;
+  box-shadow: none;
+}
+
+.url-state {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.url-paste.ok .url-state {
+  color: var(--ok);
+}
+
+.env-picker {
+  display: flex;
+  gap: 6px;
+}
+
+.env-picker button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 48px;
+  border-radius: calc(10px * var(--rs));
+  border: 1px solid var(--edge);
+  background: var(--field-bg);
+  color: var(--dim);
+  font-size: 13.5px;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.env-picker button i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.env-picker .env-local { color: var(--ok); }
+.env-picker .env-staging { color: var(--warn); }
+.env-picker .env-prod { color: var(--err); }
+
+.env-picker button.active {
+  background: var(--fill-hover);
+  border-color: currentColor;
+}
+
+.safe-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.safe-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: calc(10px * var(--rs));
+  background: var(--field-bg);
+  cursor: pointer;
+}
+
+.safe-card b {
+  display: block;
+  font-size: 13px;
+  color: var(--text-strong);
+}
+
+.safe-card small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--dim);
+}
+
+.modal .safe-card select {
+  width: auto;
+  margin-left: auto;
+  padding: 6px 28px 6px 10px;
+  font-size: 13px;
+  background-position: right 8px center;
+}
+
+.field-hint.warn {
+  color: var(--warn);
+}
+
+.inline-icon {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+}
+
+.test-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-line);
+  border-radius: calc(10px * var(--rs));
+  background: var(--field-bg);
+  font-size: 13px;
+}
+
+.test-steps .step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+}
+
+.test-steps .step.ok .s-ic {
+  color: var(--ok);
+}
+
+.test-steps .step.fail {
+  color: var(--err-text);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.test-steps .s-ic {
+  display: inline-flex;
+  width: 16px;
+}
+
+.test-steps .s-ic svg {
+  width: 14px;
+  height: 14px;
+}
+
+.test-steps .d {
+  margin-left: auto;
+  font: 11px "Monaco", "Menlo", monospace;
+  color: var(--dim);
+}
+
+.test-steps .step.result {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--ok);
+}
+
+.test-steps .step.result svg {
+  width: 15px;
+  height: 15px;
+}
+
+.connection-buttons {
+  align-items: center;
+}
+
+.connection-buttons .sp {
+  flex: 1;
 }

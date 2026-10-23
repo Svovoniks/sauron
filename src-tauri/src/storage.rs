@@ -1,4 +1,4 @@
-//! App data (connections, saved queries, saved results) is stored as JSON files in the app
+//! App data (connections, saved queries, saved results, settings, history) is stored as JSON files in the app
 //! data directory instead of the webview's localStorage (5 MB quota, wiped with the webview
 //! cache, shared with nothing). Writes are atomic (temp file + rename).
 
@@ -6,10 +6,14 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 
-const ALLOWED: [&str; 3] = ["connections", "queries", "results"];
+const ALLOWED: [&str; 7] = ["connections", "queries", "results", "settings", "history", "session", "schema"];
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
+}
+
+pub fn dir(app: &AppHandle) -> Result<PathBuf, String> {
+    data_dir(app)
 }
 
 fn file_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {

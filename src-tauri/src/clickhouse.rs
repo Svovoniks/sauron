@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use crate::cancel::{Guard, Killer};
-use crate::model::{ColumnMeta, ConnectionParams, QueryResult, SslMode, CANCELLED};
+use crate::model::{ColumnMeta, ConnectionParams, QueryResult, SslMode, StatementError, StatementOutcome, CANCELLED};
 
 /// Everything needed to `KILL QUERY` a running statement from another task.
 pub struct Kill {
@@ -109,6 +109,76 @@ pub async fn execute(
             parse_response(&body, summary.as_deref(), row_limit)
         })
         .await
+}
+
+/// Run a whole script in one ClickHouse session and report every statement separately.
+pub async fn execute_script(
+    conn: &ConnectionParams,
+    password: &str,
+    statements: &[String],
+    row_limit: usize,
+    guard: &Guard<'_>,
+) -> Result<Vec<StatementOutcome>, String> {
+    if statements.is_empty() {
+        return Err("No SQL statements to execute".to_string());
+    }
+    let url = base_url(conn)?;
+    let client = build_client(conn)?;
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let username = conn.username.trim().to_string();
+
+    guard
+        .run(async {
+            let mut outcomes = Vec::with_capacity(statements.len());
+            for statement in statements {
+                let started = std::time::Instant::now();
+                let query_id = uuid::Uuid::new_v4().to_string();
+                register_kill(guard, &client, &url, &username, password, &query_id);
+                let outcome = match send(
+                    &client, conn, &url, &username, password, &session_id, &query_id, statement, Some(row_limit),
+                )
+                .await
+                {
+                    Ok((body, summary)) => parse_response(&body, summary.as_deref(), row_limit),
+                    Err(message) => Err(message),
+                };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                match outcome {
+                    Ok(result) => outcomes.push(StatementOutcome {
+                        sql: statement.clone(),
+                        elapsed_ms,
+                        result: Some(result),
+                        error: None,
+                    }),
+                    Err(message) => {
+                        outcomes.push(StatementOutcome {
+                            sql: statement.clone(),
+                            elapsed_ms,
+                            result: None,
+                            error: Some(describe_statement_error(message)),
+                        });
+                        break;
+                    }
+                }
+            }
+            Ok(outcomes)
+        })
+        .await
+}
+
+/// ClickHouse errors look like `Code: 62. DB::Exception: Syntax error: failed at position 8 (...)`.
+pub fn describe_statement_error(message: String) -> StatementError {
+    let code = message
+        .strip_prefix("Code: ")
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .filter(|digits| !digits.is_empty())
+        .map(|digits| format!("CH {digits}"));
+    let position = message
+        .split("failed at position ")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|digits| digits.parse::<u32>().ok());
+    StatementError { message, code, position }
 }
 
 fn register_kill(guard: &Guard<'_>, client: &Client, url: &Url, username: &str, password: &str, query_id: &str) {
@@ -338,6 +408,15 @@ mod tests {
         assert_eq!(result.message.as_deref(), Some("3 rows written"));
         assert!(result.columns.is_empty());
         assert_eq!(parse_response("\n", None, 10).unwrap().message.as_deref(), Some("Statement executed"));
+    }
+
+    #[test]
+    fn error_code_and_position_are_extracted() {
+        let e = describe_statement_error("Code: 62. DB::Exception: Syntax error: failed at position 8 ('frm')".to_string());
+        assert_eq!(e.code.as_deref(), Some("CH 62"));
+        assert_eq!(e.position, Some(8));
+        let e = describe_statement_error("Request timed out".to_string());
+        assert_eq!((e.code, e.position), (None, None));
     }
 
     #[test]

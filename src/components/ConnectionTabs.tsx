@@ -1,169 +1,218 @@
-import { useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
-import type { Connection } from "../types/app";
-import { EditIcon, GripIcon, TrashIcon } from "./icons";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import type { ConnStatus } from "../hooks/useConnectionStatus";
+import { comboText } from "../lib/settings";
+import { ENV_LABEL, ENVS, type Connection, type Env } from "../types/app";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { BoltIcon, ChevronDownIcon, CopyIcon, DatabaseIcon, DotsIcon, DownloadIcon, EditIcon, GearIcon, LinkIcon, LockIcon, PlusIcon, TrashIcon, UploadIcon } from "./icons";
 
 interface ConnectionTabsProps {
   connections: Connection[];
   activeConnectionId: string | null;
+  statusOf: (id: string) => ConnStatus;
+  highlightProd: boolean;
+  settingsShortcut: string;
   onAddConnection: () => void;
+  onAddFromUrl: () => void;
   onEditConnection: (connection: Connection) => void;
+  onDuplicateConnection: (connection: Connection) => void;
   onDeleteConnection: (connection: Connection) => void;
+  onTestConnection: (connection: Connection) => void;
+  onCopyUrl: (connection: Connection) => void;
+  onSetEnv: (connection: Connection, env: Env) => void;
+  onToggleReadOnly: (connection: Connection) => void;
   onSelectTab: (connection: Connection) => void;
   onReorderConnections: (fromId: string, toId: string) => void;
   onImportConnections: () => void;
   onExportConnections: () => void;
+  onOpenSettings: () => void;
   onWindowDragStart: (event: MouseEvent<HTMLDivElement>) => void;
 }
 
-const isConnectionIncomplete = (connection: Connection) =>
-  !connection.name.trim() || !connection.host.trim() || !connection.port.trim() || !connection.database.trim() || !connection.username.trim();
+const isConnectionIncomplete = (c: Connection) => !c.name.trim() || !c.host.trim() || !c.port.trim() || !c.database.trim() || !c.username.trim();
 
-export function ConnectionTabs({
-  connections,
-  activeConnectionId,
-  onAddConnection,
-  onEditConnection,
-  onDeleteConnection,
-  onSelectTab,
-  onReorderConnections,
-  onImportConnections,
-  onExportConnections,
-  onWindowDragStart,
-}: ConnectionTabsProps) {
-  const tabsContainerRef = useRef<HTMLDivElement | null>(null);
-  const velocityRef = useRef(0);
-  const animationFrameRef = useRef<number | null>(null);
-  const [draggingConnectionId, setDraggingConnectionId] = useState<string | null>(null);
+const STATUS_TEXT = { ok: "Connected", err: "Last attempt failed", checking: "Checking…", "": "Not connected yet" } as const;
 
-  const handleWheelScroll = (event: WheelEvent<HTMLDivElement>) => {
-    const container = tabsContainerRef.current;
-    if (!container) return;
-    if (container.scrollWidth <= container.clientWidth) return;
-    if (event.deltaY === 0) return;
+/** Event the ⌘O shortcut sends to open the connection switcher. */
+export const OPEN_SWITCHER_EVENT = "sauron:open-switcher";
 
-    velocityRef.current += event.deltaY * 0.35;
+interface OpenMenu {
+  kind?: "switcher";
+  x: number;
+  y: number;
+  items: MenuItem[];
+}
 
-    if (animationFrameRef.current !== null) return;
+export function ConnectionTabs(props: ConnectionTabsProps) {
+  const { connections, activeConnectionId, statusOf, highlightProd } = props;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const switcherRef = useRef<HTMLButtonElement | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [menu, setMenu] = useState<OpenMenu | null>(null);
 
-    const animate = () => {
-      const activeContainer = tabsContainerRef.current;
-      if (!activeContainer) {
-        animationFrameRef.current = null;
-        return;
-      }
+  const connectionMenu = (connection: Connection, x: number, y: number) => {
+    const status = statusOf(connection.id);
+    const items: MenuItem[] = [
+      { type: "label", text: `${connection.name || "Unnamed"} · ${connection.db_type === "postgres" ? "Postgres" : "ClickHouse"}${status.version ? ` · ${status.version.replace(/^PostgreSQL |^ClickHouse /, "")}` : ""}` },
+      { label: "Edit…", icon: <EditIcon />, onSelect: () => props.onEditConnection(connection) },
+      { label: "Duplicate", icon: <CopyIcon />, onSelect: () => props.onDuplicateConnection(connection) },
+      { label: "Test connection", icon: <BoltIcon />, onSelect: () => props.onTestConnection(connection) },
+      { label: "Copy connection URL", icon: <LinkIcon />, hint: "no password", onSelect: () => props.onCopyUrl(connection) },
+      { type: "separator" },
+      { type: "label", text: "Environment" },
+      ...ENVS.map((env): MenuItem => ({ label: ENV_LABEL[env], checked: connection.env === env, onSelect: () => props.onSetEnv(connection, env) })),
+      { type: "separator" },
+      { label: connection.read_only ? "Allow writes" : "Make read-only", icon: <LockIcon />, onSelect: () => props.onToggleReadOnly(connection) },
+      { type: "separator" },
+      { label: "Delete…", icon: <TrashIcon />, danger: true, onSelect: () => props.onDeleteConnection(connection) },
+    ];
+    setMenu({ x, y, items });
+  };
 
-      activeContainer.scrollLeft += velocityRef.current;
-      velocityRef.current *= 0.82;
-
-      if (Math.abs(velocityRef.current) < 0.2) {
-        velocityRef.current = 0;
-        animationFrameRef.current = null;
-        return;
-      }
-
-      animationFrameRef.current = requestAnimationFrame(animate);
+  const switcherMenu = (): OpenMenu | null => {
+    const rect = switcherRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      kind: "switcher",
+      x: rect.left,
+      y: rect.bottom + 6,
+      items: [
+        { type: "label", text: "Switch connection" },
+        ...connections.map((connection, index): MenuItem => ({
+          label: (
+            <>
+              {connection.name || "Unnamed"} <span className="muted">· {connection.database || connection.host}</span>
+            </>
+          ),
+          icon: connection.read_only ? <LockIcon /> : <DatabaseIcon />,
+          hint: index < 9 ? `${comboText("Mod+" + (index + 1))}` : undefined,
+          checked: connection.id === activeConnectionId,
+          onSelect: () => props.onSelectTab(connection),
+        })),
+        ...(connections.length === 0 ? [{ type: "label", text: "No connections yet" } as MenuItem] : []),
+      ],
     };
-
-    animationFrameRef.current = requestAnimationFrame(animate);
   };
 
   useEffect(() => {
-    return () => {
-      if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
+    const open = () => {
+      const next = switcherMenu();
+      if (next) setMenu(next);
     };
-  }, []);
+    window.addEventListener(OPEN_SWITCHER_EVENT, open);
+    return () => window.removeEventListener(OPEN_SWITCHER_EVENT, open);
+  });
 
-  useEffect(() => {
-    const handleMouseUp = () => setDraggingConnectionId(null);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => window.removeEventListener("mouseup", handleMouseUp);
-  }, []);
-
-  const startReorder = (event: MouseEvent<HTMLButtonElement>, connectionId: string) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setDraggingConnectionId(connectionId);
+  const addMenu = (event: MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMenu({
+      x: rect.left,
+      y: rect.bottom + 6,
+      items: [
+        { label: "New connection…", icon: <PlusIcon />, onSelect: props.onAddConnection },
+        { label: "Paste connection URL…", icon: <LinkIcon />, onSelect: props.onAddFromUrl },
+        { type: "separator" },
+        { label: "Import from file…", icon: <UploadIcon />, onSelect: props.onImportConnections },
+        { label: "Export…", icon: <DownloadIcon />, onSelect: props.onExportConnections },
+      ],
+    });
   };
 
-  const handleReorderHover = (targetConnectionId: string) => {
-    if (!draggingConnectionId || draggingConnectionId === targetConnectionId) return;
-    onReorderConnections(draggingConnectionId, targetConnectionId);
-  };
+  const tabLabel = (connection: Connection): ReactNode => connection.name || "Unnamed";
 
   return (
-    <div
-      className="connection-tabs"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onWindowDragStart(event);
-      }}
-      onWheel={handleWheelScroll}
-      ref={tabsContainerRef}
-    >
-      {connections.map((connection) => {
-        const isDragging = draggingConnectionId === connection.id;
+    <div className="connection-bar" onMouseDown={(event) => event.target === event.currentTarget && props.onWindowDragStart(event)}>
+      <button aria-label={`Settings (${comboText(props.settingsShortcut)})`} className="conn-gear" onClick={props.onOpenSettings} title={`Settings (${comboText(props.settingsShortcut)})`} type="button">
+        <GearIcon size={17} />
+      </button>
+      <button className="conn-switcher" data-menu-anchor onClick={() => (menu?.kind === "switcher" ? setMenu(null) : setMenu(switcherMenu()))} ref={switcherRef} title="Switch connection" type="button">
+        <DatabaseIcon />
+        All connections
+        <kbd>{comboText("Mod+O")}</kbd>
+        <ChevronDownIcon size={12} />
+      </button>
+      <div
+        className="connection-tabs"
+        onWheel={(event) => {
+          // A plain mouse wheel scrolls the bar sideways (a trackpad already sends horizontal deltas).
+          const bar = event.currentTarget;
+          if (event.deltaX === 0 && event.deltaY !== 0 && bar.scrollWidth > bar.clientWidth) bar.scrollLeft += event.deltaY;
+        }}
+        onMouseDown={(event) => event.target === event.currentTarget && props.onWindowDragStart(event)}
+        ref={containerRef}
+      >
+      {connections.map((connection, index) => {
+        const status = statusOf(connection.id);
+        const active = connection.id === activeConnectionId;
+        const prod = connection.env === "prod" && highlightProd;
         return (
           <div
-            className={`tab-container ${isConnectionIncomplete(connection) ? "invalid" : ""} ${isDragging ? "dragging" : ""}`}
+            className={`conn-tab ${active ? "active" : ""} ${isConnectionIncomplete(connection) ? "invalid" : ""} ${dragging === connection.id ? "dragging" : ""} ${dropTarget === connection.id ? "drop-target" : ""} env-${connection.env || "none"} ${prod ? "prod-marked" : ""}`}
+            draggable
             key={connection.id}
-            onMouseEnter={() => handleReorderHover(connection.id)}
-            onMouseUp={() => setDraggingConnectionId(null)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              connectionMenu(connection, event.clientX, event.clientY);
+            }}
+            onDragEnd={() => {
+              setDragging(null);
+              setDropTarget(null);
+            }}
+            onDragOver={(event) => {
+              if (!dragging) return;
+              event.preventDefault();
+              setDropTarget(connection.id);
+            }}
+            onDragStart={(event) => {
+              setDragging(connection.id);
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", connection.id);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              if (dragging && dragging !== connection.id) props.onReorderConnections(dragging, connection.id);
+              setDragging(null);
+              setDropTarget(null);
+            }}
+            title={`${connection.host}:${connection.port} · ${connection.database} · ${STATUS_TEXT[status.state]}${status.error ? `: ${status.error.split("\n")[0]}` : ""}`}
           >
-            <div className="tab-actions">
-              <button
-                aria-label="Reorder connection"
-                className={`drag-tab ${isDragging ? "active" : ""}`}
-                onMouseDown={(event) => startReorder(event, connection.id)}
-                title="Drag to reorder"
-                type="button"
-              >
-                <GripIcon />
-              </button>
-              <button
-                aria-label="Edit connection"
-                className="edit-tab"
-                onClick={() => onEditConnection(connection)}
-                title="Edit connection"
-                type="button"
-              >
-                <EditIcon />
-              </button>
-              <button
-                aria-label="Delete connection"
-                className="delete-tab"
-                onClick={() => onDeleteConnection(connection)}
-                title="Delete connection"
-                type="button"
-              >
-                <TrashIcon />
-              </button>
-            </div>
             <button
-              aria-pressed={connection.id === activeConnectionId}
-              className={`tab ${connection.id === activeConnectionId ? "active" : ""}`}
-              onClick={() => onSelectTab(connection)}
+              aria-label={`${connection.name || "Unnamed"} (${comboText("Mod+" + (index + 1))})`}
+              aria-pressed={active}
+              className="conn-tab-main"
+              onClick={() => props.onSelectTab(connection)}
               type="button"
             >
-              {connection.name || "Unnamed"}
+              <span className={`conn-dot ${status.state}`} />
               {connection.read_only ? (
-                <span className="tab-badge" title="Read-only connection">
-                  RO
+                <span className="conn-lock" title="Read-only connection">
+                  <LockIcon size={12} />
                 </span>
               ) : null}
+              <span className="conn-name">{tabLabel(connection)}</span>
+              {connection.env ? <span className="env-tag">{connection.env}</span> : null}
+            </button>
+            <button
+              aria-label={`Actions for ${connection.name || "Unnamed"}`}
+              className="conn-more"
+              onClick={(event) => {
+                event.stopPropagation();
+                const rect = event.currentTarget.getBoundingClientRect();
+                connectionMenu(connection, rect.left, rect.bottom + 6);
+              }}
+              title="Connection actions"
+              type="button"
+            >
+              <DotsIcon />
             </button>
           </div>
         );
       })}
-      <button className="add-tab" onClick={onAddConnection} type="button">
-        +
+      <button aria-label="Add connection" className="conn-add" onClick={addMenu} title="Add or import connections" type="button">
+        <PlusIcon size={15} />
       </button>
-      <div className="import-export-buttons">
-        <button className="import-button" onClick={onImportConnections} type="button">
-          Import
-        </button>
-        <button className="export-button" onClick={onExportConnections} type="button">
-          Export
-        </button>
       </div>
+      {menu ? <ContextMenu items={menu.items} onClose={() => setMenu(null)} x={menu.x} y={menu.y} /> : null}
     </div>
   );
 }

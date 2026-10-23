@@ -4,13 +4,13 @@
   -webkit-appearance: none;
   width: 100%;
   padding: 14px 44px 14px 18px;
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background-color: rgba(15, 15, 35, 0.8);
+  border-radius: calc(10px * var(--rs));
+  border: 1px solid var(--edge);
+  background-color: var(--field-bg);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 16px center;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 16px;
   font-family: inherit;
   cursor: pointer;
@@ -19,8 +19,8 @@
 
 .modal select:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.15);
 }
 
 .settings-row {
@@ -29,27 +29,6 @@
 }
 
 /* a switch that looks like the inputs next to it */
-.modal .toggle-field {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 48px;
-  padding: 0 18px;
-  box-sizing: border-box;
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background: rgba(15, 15, 35, 0.8);
-  color: #e2e8f0;
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  user-select: none;
-}
-
-.modal .toggle-field:focus-within {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
-}
 
 .modal input.toggle-input {
   position: absolute;
@@ -66,8 +45,8 @@
   flex-shrink: 0;
   width: 40px;
   height: 22px;
-  border-radius: 999px;
-  background: rgba(100, 116, 139, 0.55);
+  border-radius: calc(999px * var(--rs));
+  background: color-mix(in srgb, var(--faint) 55%, transparent);
   transition: background 0.2s ease;
 }
 
@@ -84,7 +63,7 @@
 }
 
 .toggle-input:checked + .toggle-track {
-  background: #22c55e;
+  background: var(--accent);
 }
 
 .toggle-input:checked + .toggle-track::after {
@@ -94,26 +73,16 @@
 .field-hint {
   margin: -4px 0 0;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--dim);
 }
 
 .form-error {
   margin: 0;
-  color: #fca5a5;
+  color: var(--err-text);
   font-size: 14px;
 }
 
 /* --- tabs ------------------------------------------------------------------------------ */
-.tab-badge {
-  margin-left: 8px;
-  padding: 1px 6px;
-  border-radius: 6px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  background: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
-}
 
 /* --- saved items: the clickable part is a real button now ------------------------------ */
 .query-select {
@@ -129,9 +98,9 @@
 }
 
 .query-select:focus-visible {
-  outline: 2px solid rgba(59, 130, 246, 0.8);
+  outline: 2px solid rgba(var(--accent-rgb), 0.8);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: calc(6px * var(--rs));
 }
 
 /* --- results --------------------------------------------------------------------------- */
@@ -144,26 +113,7 @@
   margin-left: 10px;
   font-size: 12px;
   font-weight: 500;
-  color: #94a3b8;
-}
-
-.truncation-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 14px;
-  margin-bottom: 8px;
-  border-radius: 10px;
-  border: 1px solid rgba(245, 158, 11, 0.4);
-  background: rgba(245, 158, 11, 0.12);
-  color: #fbbf24;
-  font-size: 13px;
-}
-
-.key-type.string {
-  background: rgba(59, 130, 246, 0.2);
-  color: #60a5fa;
+  color: var(--dim);
 }
 
 /* --- notices & fatal error --------------------------------------------------------------- */
@@ -183,17 +133,17 @@
   align-items: flex-start;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   font-size: 13px;
   line-height: 1.4;
-  color: #e2e8f0;
-  background: rgba(15, 23, 42, 0.96);
-  border: 1px solid rgba(59, 130, 246, 0.5);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  color: var(--text);
+  background: var(--menu-bg);
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  box-shadow: var(--shadow-pop);
 }
 
 .notice.error {
-  border-color: rgba(248, 113, 113, 0.6);
+  border-color: color-mix(in srgb, var(--err) 60%, transparent);
 }
 
 .notice-text {
@@ -205,7 +155,7 @@
 .notice-close {
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--dim);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
@@ -216,10 +166,10 @@
   max-width: 560px;
   margin: 15vh auto 0;
   padding: 24px;
-  border-radius: 16px;
-  border: 1px solid rgba(248, 113, 113, 0.5);
-  background: rgba(15, 23, 42, 0.9);
-  color: #e2e8f0;
+  border-radius: var(--r-panel);
+  border: 1px solid color-mix(in srgb, var(--err) 50%, transparent);
+  background: var(--menu-bg);
+  color: var(--text);
 }
 
 .fatal-error h2 {
@@ -227,7 +177,7 @@
 }
 
 .fatal-error-hint {
-  color: #94a3b8;
+  color: var(--dim);
 }
 
 /* long forms must stay reachable on small windows */
@@ -245,17 +195,17 @@
 
 .query-file-button {
   background: none;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  border-radius: 8px;
+  border: 1px solid var(--edge);
+  border-radius: calc(8px * var(--rs));
   padding: 3px 10px;
-  color: #94a3b8;
+  color: var(--dim);
   font-size: 12px;
   cursor: pointer;
 }
 
 .query-file-button:hover:not(:disabled) {
-  color: #e2e8f0;
-  border-color: rgba(148, 163, 184, 0.6);
+  color: var(--text);
+  border-color: var(--line-strong);
 }
 
 .query-file-button:disabled {

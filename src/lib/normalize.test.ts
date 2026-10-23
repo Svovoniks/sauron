@@ -23,6 +23,7 @@ const fullConn: Connection = {
   ssl_mode: "verify",
   read_only: true,
   timeout_secs: 30,
+  env: "",
 };
 
 describe("normalizeConnection", () => {
@@ -49,6 +50,7 @@ describe("normalizeConnection", () => {
       ssl_mode: "prefer",
       read_only: false,
       timeout_secs: 0,
+      env: "",
     });
     expect(r!.legacyPassword).toBeNull();
   });
@@ -159,6 +161,16 @@ describe("normalizeConnection", () => {
     expect(normalizeConnection({ read_only: false })!.connection.read_only).toBe(false);
     expect(normalizeConnection({})!.connection.read_only).toBe(false);
     expect(normalizeConnection({ read_only: "true" })!.connection.read_only).toBe(false);
+  });
+
+  test("env: one of the known values, anything else is none", () => {
+    const e = (v: unknown) => normalizeConnection({ env: v })!.connection.env;
+    expect(e("prod")).toBe("prod");
+    expect(e("staging")).toBe("staging");
+    expect(e("local")).toBe("local");
+    expect(e("production")).toBe("");
+    expect(e(undefined)).toBe("");
+    expect(e(5)).toBe("");
   });
 
   test("timeout_secs: finite non-negative integer else 0", () => {
@@ -598,6 +610,7 @@ describe("normalizeBackup", () => {
       ssl_mode: "verify",
       read_only: false,
       timeout_secs: 0,
+      env: "",
     });
     expect(b.results.ch![0]!.rows).toEqual([[null, '{"c":1}']]);
   });

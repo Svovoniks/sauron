@@ -9,7 +9,7 @@ import {
 type Axis = "both" | "x" | "y";
 
 const DEFAULT_SIDEBAR_WIDTH = 350;
-const DEFAULT_QUERY_HEIGHT = 185;
+const DEFAULT_QUERY_HEIGHT = 230;
 const MIN_SIDEBAR_WIDTH = 220;
 const MIN_RESULTS_WIDTH = 320;
 const MIN_MAIN_HEIGHT = 160;

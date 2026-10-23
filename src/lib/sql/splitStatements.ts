@@ -7,6 +7,17 @@ const isIdentChar = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_$\
 const isTagStart = (c: string | undefined) => c !== undefined && /[A-Za-z_\u0080-\uFFFF]/.test(c);
 const isTagChar = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_\u0080-\uFFFF]/.test(c);
 
+/** One statement and where it sits in the script (`start` / `end` are offsets of the trimmed text). */
+export interface StatementRange {
+  text: string;
+  start: number;
+  end: number;
+}
+
+export function splitSqlStatements(sql: string, dialect: DbType): string[] {
+  return splitSqlRanges(sql, dialect).map((range) => range.text);
+}
+
 /**
  * Splits a SQL script into statements on top-level `;`.
  *
@@ -14,10 +25,10 @@ const isTagChar = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_\u00
  * Comments are kept in the statement they belong to; chunks consisting only of whitespace/comments are dropped.
  * Unterminated constructs swallow the rest of the input. Never throws.
  */
-export function splitSqlStatements(sql: string, dialect: DbType): string[] {
+export function splitSqlRanges(sql: string, dialect: DbType): StatementRange[] {
   const pg = dialect === "postgres";
   const ch = dialect === "clickhouse";
-  const statements: string[] = [];
+  const statements: StatementRange[] = [];
   const n = sql.length;
 
   let start = 0;
@@ -26,8 +37,12 @@ export function splitSqlStatements(sql: string, dialect: DbType): string[] {
 
   const flush = (end: number) => {
     if (hasContent) {
-      const text = sql.slice(start, end).trim();
-      if (text !== "") statements.push(text);
+      const raw = sql.slice(start, end);
+      const text = raw.trim();
+      if (text !== "") {
+        const from = start + (raw.length - raw.trimStart().length);
+        statements.push({ text, start: from, end: from + text.length });
+      }
     }
     hasContent = false;
     start = end + 1;

@@ -54,6 +54,16 @@
     flex-direction: row;
   }
 
+  /* Stacked layout: the buttons share the row instead of having a fixed column width. */
+  .query-section > .query-actions {
+    width: auto;
+  }
+
+  .query-section > .query-actions > * {
+    width: auto;
+    flex: 1;
+  }
+
   .connection-tabs {
     flex-wrap: wrap;
     gap: 8px;

@@ -8,6 +8,11 @@ export type DbType = "postgres" | "clickhouse";
  */
 export type SslMode = "disable" | "prefer" | "require" | "verify";
 
+/** What a connection is used for; "prod" turns on the production guard and the red markers. */
+export type Env = "" | "local" | "staging" | "prod";
+export const ENVS: readonly Env[] = ["", "local", "staging", "prod"];
+export const ENV_LABEL: Record<Env, string> = { "": "none", local: "local", staging: "staging", prod: "prod" };
+
 /** Persisted connection. The password is NOT part of it - it lives in the OS keychain, keyed by `id`. */
 export interface Connection {
   id: string;
@@ -21,6 +26,7 @@ export interface Connection {
   read_only: boolean;
   /** Per-statement timeout in seconds, 0 = no timeout. */
   timeout_secs: number;
+  env: Env;
 }
 
 /** Connection being edited in the modal: `password === ""` on an existing connection means "unchanged". */
@@ -37,6 +43,34 @@ export interface ColumnMeta {
 
 /** A cell is the exact text the database returned, or null for SQL NULL. */
 export type Cell = string | null;
+
+/** Why one statement failed; `position` is the 1-based character offset inside that statement. */
+export interface StatementError {
+  message: string;
+  code: string | null;
+  position: number | null;
+}
+
+/** What one statement of a script produced (see `execute_script` in lib.rs). */
+export interface StatementOutcome {
+  sql: string;
+  elapsed_ms: number;
+  result: QueryResult | null;
+  error: StatementError | null;
+}
+
+export interface TestStep {
+  name: string;
+  ok: boolean;
+  detail: string;
+  ms: number;
+}
+
+export interface TestReport {
+  ok: boolean;
+  steps: TestStep[];
+  server_version: string | null;
+}
 
 export interface QueryResult {
   columns: ColumnMeta[];
@@ -87,7 +121,14 @@ export const emptyAppData = (): AppData => ({
 
 export const defaultPort = (dbType: DbType) => (dbType === "postgres" ? "5432" : "8123");
 
-export const emptyDraft = (): ConnectionDraft => ({
+/** Defaults for a new connection (Settings → Connections). */
+export interface DraftDefaults {
+  readOnly: boolean;
+  timeoutSecs: number;
+  sslMode: SslMode;
+}
+
+export const emptyDraft = (defaults: Partial<DraftDefaults> = {}): ConnectionDraft => ({
   id: "",
   name: "",
   host: "",
@@ -95,9 +136,10 @@ export const emptyDraft = (): ConnectionDraft => ({
   username: "",
   database: "",
   db_type: "postgres",
-  ssl_mode: "require",
-  read_only: true,
-  timeout_secs: 60,
+  ssl_mode: defaults.sslMode ?? "require",
+  read_only: defaults.readOnly ?? true,
+  timeout_secs: defaults.timeoutSecs ?? 60,
+  env: "",
   password: "",
 });
 
