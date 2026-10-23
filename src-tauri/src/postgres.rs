@@ -64,16 +64,34 @@ pub async fn execute(
         .await
 }
 
+/// Did the connection die while negotiating TLS (as opposed to a wrong password, an unreachable host or a timeout)?
+fn tls_attempt_failed(e: &tokio_postgres::Error) -> bool {
+    if e.as_db_error().is_some() {
+        return false;
+    }
+    let text = format!("{e:?} {e}").to_lowercase();
+    ["tls", "ssl", "eof", "closed", "reset"].iter().any(|needle| text.contains(needle))
+}
+
 /// Connect, register the cancel token and apply the connection's read-only / timeout settings.
 pub async fn connect_session(
     conn: &ConnectionParams,
     password: &str,
     guard: &Guard<'_>,
 ) -> Result<Client, String> {
-    let cfg = build_config(conn, password)?;
+    let mut cfg = build_config(conn, password)?;
     let tls = tls_connector(conn.ssl_mode)?;
 
-    let (client, connection) = cfg.connect(tls.clone()).await.map_err(describe_error)?;
+    let (client, connection) = match cfg.connect(tls.clone()).await {
+        Ok(connected) => connected,
+        // libpq's `prefer` also retries without TLS when the server offers it but the handshake then fails
+        // (old TLS version, a proxy that accepts SSL but cannot finish it); tokio-postgres only falls back on a plain "no".
+        Err(e) if conn.ssl_mode == SslMode::Prefer && tls_attempt_failed(&e) => {
+            cfg.ssl_mode(tokio_postgres::config::SslMode::Disable);
+            cfg.connect(tls.clone()).await.map_err(describe_error)?
+        }
+        Err(e) => return Err(describe_error(e)),
+    };
     tokio::spawn(async move {
         let _ = connection.await;
     });
@@ -732,6 +750,33 @@ mod integration_tests {
         let err = run(&c, &["select pg_sleep(10)"], 10).await.unwrap_err();
         assert!(err.contains("statement timeout"), "{err}");
         assert!(started.elapsed().as_secs() < 5);
+    }
+
+    /// A server that agrees to SSL and then hangs up (what a proxy that cannot finish the handshake looks like) must count as a
+    /// TLS failure so `prefer` retries in plain text; an unreachable host must not.
+    #[tokio::test]
+    async fn prefer_retries_only_after_a_failed_tls_handshake() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 8];
+            socket.read_exact(&mut request).await.unwrap();
+            socket.write_all(b"S").await.unwrap();
+        });
+        let mut cfg = tokio_postgres::Config::new();
+        cfg.host("127.0.0.1").port(port).user("u").ssl_mode(tokio_postgres::config::SslMode::Prefer);
+        let tls = tls_connector(SslMode::Prefer).unwrap();
+        let err = cfg.connect(tls.clone()).await.err().expect("the handshake cannot succeed");
+        assert!(tls_attempt_failed(&err), "{err:?}");
+
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_port = closed.local_addr().unwrap().port();
+        drop(closed);
+        cfg.port(closed_port);
+        let err = cfg.connect(tls).await.err().expect("nothing listens there");
+        assert!(!tls_attempt_failed(&err), "{err:?}");
     }
 
     #[tokio::test]
