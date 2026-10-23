@@ -58,6 +58,13 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
  - the updater reads `latest.json` from the *latest published* release, so it only sees a release after you publish the draft;
    versions released before this feature existed have to be updated by hand once
 
+## macOS keychain prompts
+ - macOS asks for the keychain password when an app whose code signature changed reads a saved password. Ad-hoc signed builds get a new
+   signature every build, so the release workflow signs the macOS app with a fixed self-signed certificate (`Sauron Self-Signed`) instead:
+   after one *Always Allow* per connection the prompts stop for good, across updates
+ - the certificate lives in the GitHub Actions secrets `MACOS_CODESIGN_P12` (base64 of the .p12) and `MACOS_CODESIGN_P12_PASSWORD`; keep the
+   same certificate forever, a new one counts as a different app and brings the prompts back once. Local `bun tauri build` stays ad-hoc signed
+
 ## Where is my data?
  - connections, saved queries and saved results are JSON files in the app data directory
    (macOS: `~/Library/Application Support/com.svovoniks.sauron/`); settings, query history and your open tabs are `settings.json`,
