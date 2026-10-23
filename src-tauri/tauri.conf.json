@@ -46,7 +46,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU5MjZFQjAyRTAwRDc4MkQKUldRdGVBM2dBdXNtNlpMS2dsbGlML3dRekUxNHU4dUt0aDcxS1gvQzJjQi9KYm5GOHFVeUh6WEcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcwRUNDQjBBNTdBNUU4M0QKUldROTZLVlhDc3ZzY0hWWG1nM2lWemsrS3lDWG1wOFJ6VzArR2xFanZld1JmWFR6NDRxallEUzMK",
       "endpoints": [
         "https://github.com/Svovoniks/sauron/releases/latest/download/latest.json"
       ]
