@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cancelQuery, CANCELLED_MESSAGE, executeMetaCommand, executeScript, isMetaCommand } from "../lib/db/query";
 import { statementLabel } from "../lib/sql/analyze";
 import { splitSqlRanges } from "../lib/sql/splitStatements";
@@ -224,8 +224,12 @@ export function useWorkspace(options: Options) {
   const finish = useCallback((id: number, apply: () => void) => {
     if (activeRun.current?.id !== id) return false;
     activeRun.current = null;
-    setRunningTabId(null);
-    apply();
+    // A transition: showing a big result takes a while to render, and this lets React do it in slices between frames
+    // instead of in one block that freezes the loading animation.
+    startTransition(() => {
+      setRunningTabId(null);
+      apply();
+    });
     return true;
   }, []);
 

@@ -79,9 +79,10 @@ export function QuerySection({ editorContainerRef, tabs, isLoading, isCommandQue
             <button
               aria-label="More ways to run"
               className="button execute-button run-menu"
+              data-menu-anchor
               onClick={() => {
                 const rect = menuButton.current?.getBoundingClientRect();
-                if (rect) setMenu({ x: rect.right - 260, y: rect.top - 6 });
+                setMenu((current) => (current || !rect ? null : { x: rect.right - 260, y: rect.top - 6 }));
               }}
               ref={menuButton}
               type="button"

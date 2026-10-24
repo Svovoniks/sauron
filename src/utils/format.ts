@@ -4,6 +4,15 @@ import type { Cell } from "../types/app";
 /** What the table / detail view shows for a cell. NULL is shown as the word "null". */
 export const cellText = (value: Cell, nullText = "null"): string => (value === null ? nullText : value);
 
+/**
+ * Longest text a table cell puts into the page. A cell shows one line, a few hundred characters at most, but a json or
+ * text column can hold megabytes; laying all of that out freezes the window for a moment when a result appears.
+ * The record view and search still use the full value.
+ */
+export const CELL_DISPLAY_CHARS = 300;
+
+export const clipCell = (text: string): string => (text.length > CELL_DISPLAY_CHARS ? `${text.slice(0, CELL_DISPLAY_CHARS)}…` : text);
+
 export type ValueKind = "null" | "boolean" | "number" | "json" | "string";
 
 export interface DetailValue {

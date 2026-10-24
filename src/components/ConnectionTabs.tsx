@@ -36,7 +36,8 @@ const STATUS_TEXT = { ok: "Connected", err: "Last attempt failed", checking: "Ch
 export const OPEN_SWITCHER_EVENT = "sauron:open-switcher";
 
 interface OpenMenu {
-  kind?: "switcher";
+  /** The control that opened it: clicking that control again closes the menu instead of reopening it. */
+  owner: string;
   x: number;
   y: number;
   items: MenuItem[];
@@ -50,7 +51,7 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
 
-  const connectionMenu = (connection: Connection, x: number, y: number) => {
+  const connectionMenu = (connection: Connection, x: number, y: number): OpenMenu => {
     const status = statusOf(connection.id);
     const items: MenuItem[] = [
       { type: "label", text: `${connection.name || "Unnamed"} · ${connection.db_type === "postgres" ? "Postgres" : "ClickHouse"}${status.version ? ` · ${status.version.replace(/^PostgreSQL |^ClickHouse /, "")}` : ""}` },
@@ -66,14 +67,14 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
       { type: "separator" },
       { label: "Delete…", icon: <TrashIcon />, danger: true, onSelect: () => props.onDeleteConnection(connection) },
     ];
-    setMenu({ x, y, items });
+    return { owner: `connection:${connection.id}`, x, y, items };
   };
 
   const switcherMenu = (): OpenMenu | null => {
     const rect = switcherRef.current?.getBoundingClientRect();
     if (!rect) return null;
     return {
-      kind: "switcher",
+      owner: "switcher",
       x: rect.left,
       y: rect.bottom + 6,
       items: [
@@ -94,18 +95,19 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
     };
   };
 
+  /** Opens `next`, or closes the menu when it is already open for the same control. */
+  const toggleMenu = (next: OpenMenu | null) => setMenu((current) => (!next || current?.owner === next.owner ? null : next));
+
   useEffect(() => {
-    const open = () => {
-      const next = switcherMenu();
-      if (next) setMenu(next);
-    };
+    const open = () => toggleMenu(switcherMenu());
     window.addEventListener(OPEN_SWITCHER_EVENT, open);
     return () => window.removeEventListener(OPEN_SWITCHER_EVENT, open);
   });
 
   const addMenu = (event: MouseEvent<HTMLButtonElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    setMenu({
+    toggleMenu({
+      owner: "add",
       x: rect.left,
       y: rect.bottom + 6,
       items: [
@@ -118,6 +120,20 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
     });
   };
 
+  // Selecting a connection from anywhere (switcher, palette, Mod+1..9, sidebar) brings its tab into view.
+  useEffect(() => {
+    const bar = containerRef.current;
+    const tab = bar?.querySelector<HTMLElement>(".conn-tab.active");
+    if (!bar || !tab) return;
+    const margin = 24;
+    const barBox = bar.getBoundingClientRect();
+    const tabBox = tab.getBoundingClientRect();
+    const left = tabBox.left - barBox.left + bar.scrollLeft;
+    const right = left + tabBox.width;
+    if (left - margin < bar.scrollLeft) bar.scrollTo({ left: Math.max(0, left - margin), behavior: "smooth" });
+    else if (right + margin > bar.scrollLeft + bar.clientWidth) bar.scrollTo({ left: right + margin - bar.clientWidth, behavior: "smooth" });
+  }, [activeConnectionId, connections.length]);
+
   const tabLabel = (connection: Connection): ReactNode => connection.name || "Unnamed";
 
   return (
@@ -125,7 +141,7 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
       <button aria-label={`Settings (${comboText(props.settingsShortcut)})`} className="conn-gear" onClick={props.onOpenSettings} title={`Settings (${comboText(props.settingsShortcut)})`} type="button">
         <GearIcon size={17} />
       </button>
-      <button className="conn-switcher" data-menu-anchor onClick={() => (menu?.kind === "switcher" ? setMenu(null) : setMenu(switcherMenu()))} ref={switcherRef} title="Switch connection" type="button">
+      <button className="conn-switcher" data-menu-anchor onClick={() => toggleMenu(switcherMenu())} ref={switcherRef} title="Switch connection" type="button">
         <DatabaseIcon />
         All connections
         <kbd>{comboText("Mod+O")}</kbd>
@@ -152,7 +168,7 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
             key={connection.id}
             onContextMenu={(event) => {
               event.preventDefault();
-              connectionMenu(connection, event.clientX, event.clientY);
+              setMenu(connectionMenu(connection, event.clientX, event.clientY));
             }}
             onDragEnd={() => {
               setDragging(null);
@@ -195,10 +211,11 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
             <button
               aria-label={`Actions for ${connection.name || "Unnamed"}`}
               className="conn-more"
+              data-menu-anchor
               onClick={(event) => {
                 event.stopPropagation();
                 const rect = event.currentTarget.getBoundingClientRect();
-                connectionMenu(connection, rect.left, rect.bottom + 6);
+                toggleMenu(connectionMenu(connection, rect.left, rect.bottom + 6));
               }}
               title="Connection actions"
               type="button"
@@ -208,7 +225,7 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
           </div>
         );
       })}
-      <button aria-label="Add connection" className="conn-add" onClick={addMenu} title="Add or import connections" type="button">
+      <button aria-label="Add connection" className="conn-add" data-menu-anchor onClick={addMenu} title="Add or import connections" type="button">
         <PlusIcon size={15} />
       </button>
       </div>

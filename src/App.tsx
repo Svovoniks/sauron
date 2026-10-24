@@ -281,7 +281,8 @@ export default function App() {
   const startRequest = useCallback(
     (request: RunRequest) => {
       setSelectedIndex(null);
-      editor.clearMarkers();
+      // The editor still shows the previous tab while a just-opened tab starts its run; that tab has no markers of its own.
+      if (request.tabId === activeTab?.id) editor.clearMarkers();
       setRestoredNotes((notes) => {
         if (!(request.tabId in notes)) return notes;
         const { [request.tabId]: _gone, ...rest } = notes;
@@ -289,7 +290,7 @@ export default function App() {
       });
       ws.startRun(request);
     },
-    [editor, ws],
+    [activeTab?.id, editor, ws],
   );
 
   /** Guards in front of a run: production writes and risky backslash commands. */
@@ -348,18 +349,15 @@ export default function App() {
     const tab = ws.addTab({ name, sql, connectionId: connection?.id ?? null });
     setSelectedIndex(null);
     if (!connection) return;
-    window.setTimeout(
-      () =>
-        requestRun({
-          tabId: tab.id,
-          connection,
-          text: sql,
-          offset: 0,
-          rowLimit: settings.rowLimit,
-          psql: { path: settings.psqlPath, useFallback: settings.psqlFallback },
-        }),
-      0,
-    );
+    // Started in the same tick as the new tab (React batches both into one render), so the tab never shows "not run yet".
+    requestRun({
+      tabId: tab.id,
+      connection,
+      text: sql,
+      offset: 0,
+      rowLimit: settings.rowLimit,
+      psql: { path: settings.psqlPath, useFallback: settings.psqlFallback },
+    });
   };
 
   const loadMore = () => {
@@ -1186,7 +1184,7 @@ export default function App() {
               canLoadMore={canLoadMore}
               connection={activeConnection}
               executeShortcut={settings.shortcuts.execute}
-              prefs={{ nullText: settings.nullText, rowNumbers: settings.rowNumbers, rowHeight: DENSITY_ROW_HEIGHT[settings.density], prettyJson: settings.prettyJson, findShortcut: settings.shortcuts.find }}
+              prefs={{ nullText: settings.nullText, rowNumbers: settings.rowNumbers, rowHeight: DENSITY_ROW_HEIGHT[settings.density], prettyJson: settings.prettyJson, findShortcut: settings.shortcuts.find, loadingAnimation: settings.loadingAnimation }}
               recordsTableRef={recordsTableRef}
               restoredNote={activeTab ? (restoredNotes[activeTab.id] ?? null) : null}
               run={activeRun}

@@ -53,6 +53,15 @@ describe("combos", () => {
   });
 });
 
+describe("loading animation setting", () => {
+  test("defaults to the eye and ignores unknown values", () => {
+    expect(DEFAULT_SETTINGS.loadingAnimation).toBe("eye");
+    expect(normalizeSettings({}).loadingAnimation).toBe("eye");
+    expect(normalizeSettings({ loadingAnimation: "spinner" }).loadingAnimation).toBe("eye");
+    expect(normalizeSettings({ loadingAnimation: "tower" }).loadingAnimation).toBe("tower");
+  });
+});
+
 describe("theme settings", () => {
   test("theme and appearance fall back to defaults when unknown", () => {
     const s = normalizeSettings({ theme: "nope", appearance: "sepia" });

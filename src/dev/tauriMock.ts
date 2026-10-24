@@ -50,6 +50,9 @@ const rowsResult = (names: string[], rows: (string | null)[][]): QueryResult => 
   message: null,
 });
 
+// `?tables=2000` in the dev URL adds that many fake tables (to see how big schemas behave).
+const EXTRA_TABLES = Number(new URLSearchParams(globalThis.location?.search ?? "").get("tables")) || 0;
+
 const TABLES: [string, string, string, string][] = [
   ["customers", "r", "14", "49152"],
   ["orders", "r", "1200000", "327155712"],
@@ -57,6 +60,7 @@ const TABLES: [string, string, string, string][] = [
   ["products", "r", "3410", "2097152"],
   ["invoices", "p", "88000", "22020096"],
   ["refunds", "r", "2904", "655360"],
+  ...Array.from({ length: EXTRA_TABLES }, (_, i): [string, string, string, string] => [`bulk_table_${i}`, "r", String(i * 7), String(i * 8192)]),
 ];
 const COLUMNS: Record<string, [string, string, string][]> = {
   customers: [["id", "bigint", "false"], ["name", "text", "true"], ["email", "text", "true"], ["plan", "text", "true"], ["seats", "integer", "true"], ["active", "boolean", "false"], ["created_at", "timestamp with time zone", "false"]],

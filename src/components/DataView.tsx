@@ -9,11 +9,11 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { comboText, matchesCombo } from "../lib/settings";
+import { comboText, matchesCombo, type LoadingAnimation } from "../lib/settings";
 import type { Schema } from "../lib/schema";
 import type { Connection } from "../types/app";
 import { MESSAGES, type QueryTab, type ResultSet, type TabRun } from "../types/workspace";
-import { cellText } from "../utils/format";
+import { cellText, clipCell } from "../utils/format";
 import { CheckIcon, CloseIcon, InfoIcon, SearchIcon } from "./icons";
 import { RecordInspector } from "./RecordInspector";
 import { DoneState, ErrorCard, MessagesView, NotRunState, RunningState, type ErrorActions } from "./ResultStates";
@@ -52,7 +52,7 @@ interface DataViewProps {
   executeShortcut: string;
   abortShortcut: string;
   /** Display preferences (Settings). */
-  prefs: { nullText: string; rowNumbers: boolean; rowHeight: number; prettyJson: boolean; findShortcut: string };
+  prefs: { nullText: string; rowNumbers: boolean; rowHeight: number; prettyJson: boolean; findShortcut: string; loadingAnimation: LoadingAnimation };
   actions: DataViewActions;
 }
 
@@ -96,7 +96,7 @@ const renderHighlightedText = (text: string, searchTerm: string): ReactNode => {
   return segments;
 };
 
-function SearchHighlightedCell({ searchTerm, text }: { searchTerm: string; text: string }) {
+function SearchHighlightedCell({ searchTerm, text, full }: { searchTerm: string; text: string; full: string }) {
   const cellRef = useRef<HTMLTableCellElement | null>(null);
   const [isMatchHidden, setIsMatchHidden] = useState(false);
 
@@ -142,7 +142,7 @@ function SearchHighlightedCell({ searchTerm, text }: { searchTerm: string; text:
   }, [isMatchHidden, searchTerm, text]);
 
   return (
-    <td className={`truncate ${isMatchHidden ? "search-hidden-match" : ""}`} ref={cellRef} title={text.length > 500 ? text.slice(0, 500) + "…" : text}>
+    <td className={`truncate ${isMatchHidden ? "search-hidden-match" : ""}`} ref={cellRef} title={full.length > 500 ? full.slice(0, 500) + "…" : full}>
       <span className="cell-clip">
         <span className="cell-text-content">{renderHighlightedText(text, searchTerm)}</span>
         {isMatchHidden && (
@@ -292,7 +292,7 @@ export function DataView({
 
   const renderBody = () => {
     if (!tab || !run) return <NotRunState connectionName={connection?.name ?? null} name={tab?.name ?? "this tab"} shortcut={executeShortcut} />;
-    if (isRunning) return <RunningState abortShortcut={abortShortcut} onCancel={actions.onCancel} run={run} timeoutSecs={timeoutSecs} />;
+    if (isRunning) return <RunningState abortShortcut={abortShortcut} animation={prefs.loadingAnimation} onCancel={actions.onCancel} run={run} timeoutSecs={timeoutSecs} />;
     if (run.error) {
       return (
         <ErrorCard actions={actions} code={null} connectionName={run.connectionName} message={run.error} position={null} schema={schema} set={null} timeoutSecs={timeoutSecs} />
@@ -355,9 +355,10 @@ export function DataView({
                       ref={virtualizer.measureElement}
                     >
                       {prefs.rowNumbers ? <td className="row-number">{item.index + 1}</td> : null}
-                      {columns.map((_, cellIndex) => (
-                        <SearchHighlightedCell key={cellIndex} searchTerm={searchTerm} text={cellText(row[cellIndex] ?? null, prefs.nullText)} />
-                      ))}
+                      {columns.map((_, cellIndex) => {
+                        const full = cellText(row[cellIndex] ?? null, prefs.nullText);
+                        return <SearchHighlightedCell full={full} key={cellIndex} searchTerm={searchTerm} text={clipCell(full)} />;
+                      })}
                     </tr>
                   );
                 })}

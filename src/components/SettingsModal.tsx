@@ -65,6 +65,12 @@ export const settingsSections = (version: string): Section[] => [
       },
       { id: "accent", label: "Accent color", desc: "Buttons, selection and focus rings. “Theme” uses the theme’s own accent.", control: { type: "swatch" } },
       {
+        id: "loadingAnimation",
+        label: "Loading animation",
+        desc: "What plays while a query runs: the turning eye from the logo, or the eye on its tower.",
+        control: { type: "seg", key: "loadingAnimation", options: [{ value: "eye", label: "Eye" }, { value: "tower", label: "Tower" }] },
+      },
+      {
         id: "autoUpdate",
         label: "Check for updates automatically",
         desc: "Once at launch, from GitHub releases. You are asked before anything is downloaded.",

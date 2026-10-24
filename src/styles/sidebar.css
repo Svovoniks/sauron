@@ -441,7 +441,8 @@
 }
 
 .h-item:hover .h-actions,
-.h-item:focus-within .h-actions {
+.h-item:focus-visible .h-actions,
+.h-item:has(.h-actions button:focus-visible) .h-actions {
   display: flex;
 }
 
@@ -633,9 +634,27 @@
   border-radius: calc(7px * var(--rs));
 }
 
+/* Hover, or keyboard focus only: after a mouse click the row keeps focus, which must not pin the buttons open. */
 .t-row:hover .t-actions,
-.t-row:focus-within .t-actions {
+.t-row:focus-visible .t-actions,
+.t-row:has(.t-actions button:focus-visible) .t-actions {
   display: flex;
+}
+
+/* The tree scrolls (and clips), so the focus ring is drawn inside the row; and only for the keyboard, not after a click. */
+.t-row,
+.t-col,
+.t-sec,
+.h-item {
+  outline: none;
+}
+
+.t-row:focus-visible,
+.t-col:focus-visible,
+.t-sec:focus-visible,
+.h-item:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.8);
+  outline-offset: -2px;
 }
 
 .t-row:hover .t-meta {

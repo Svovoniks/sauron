@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { describeError, errorSnippet, quickFix } from "../lib/errors";
 import { formatDuration } from "../lib/history";
 import type { Schema } from "../lib/schema";
-import { comboText } from "../lib/settings";
+import { comboText, type LoadingAnimation } from "../lib/settings";
 import { SauronEye } from "./SauronEye";
+import { SauronTower } from "./SauronTower";
 import type { ResultSet, TabRun } from "../types/workspace";
 import { BoltIcon, CheckIcon, ClockIcon, CopyIcon, InfoIcon, PlayIcon, PlugIcon, SparkleIcon, StopIcon, WarningIcon } from "./icons";
 
@@ -146,10 +147,11 @@ interface RunningStateProps {
   timeoutSecs: number;
   onCancel: () => void;
   abortShortcut: string;
+  animation: LoadingAnimation;
 }
 
 /** The watching eye + elapsed time while a query runs. After a few seconds it says so and offers Cancel. */
-export function RunningState({ run, timeoutSecs, onCancel, abortShortcut }: RunningStateProps) {
+export function RunningState({ run, timeoutSecs, onCancel, abortShortcut, animation }: RunningStateProps) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 100);
@@ -178,7 +180,7 @@ export function RunningState({ run, timeoutSecs, onCancel, abortShortcut }: Runn
             </button>
           </div>
         ) : null}
-        <SauronEye />
+        {animation === "tower" ? <SauronTower /> : <SauronEye />}
       </div>
     </div>
   );
