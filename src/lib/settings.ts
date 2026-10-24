@@ -16,6 +16,7 @@ export type AccentChoice = "Auto" | AccentName;
 export type Density = "compact" | "comfortable" | "spacious";
 export type ExecScope = "script" | "statement";
 export type HistoryKeep = "off" | "7" | "30" | "forever";
+export type LoadingAnimation = "eye" | "tower";
 export type SslDefault = "disable" | "prefer" | "require" | "verify";
 
 export type ShortcutId = "execute" | "save" | "find" | "palette" | "settings";
@@ -26,6 +27,8 @@ export interface Settings {
   appearance: AppearanceSetting;
   accent: AccentChoice;
   restoreSession: boolean;
+  /** What plays while a query runs. */
+  loadingAnimation: LoadingAnimation;
   autoUpdate: boolean;
   /** Version the user chose to skip in the update dialog (offered again when a newer one appears). */
   skippedUpdate: string;
@@ -73,6 +76,7 @@ export const DEFAULT_SETTINGS: Settings = {
   appearance: "dark",
   accent: "Auto",
   restoreSession: true,
+  loadingAnimation: "eye",
   autoUpdate: true,
   skippedUpdate: "",
   editorFontSize: 15,
@@ -129,6 +133,7 @@ export function normalizeSettings(raw: unknown): Settings {
     // Settings files from before themes always carry "Blue" (the old default), which must not override a theme's own accent.
     accent: raw.theme === undefined && raw.accent === "Blue" ? "Auto" : oneOf(raw.accent, ["Auto", ...(Object.keys(ACCENTS) as AccentName[])], d.accent),
     restoreSession: bool(raw.restoreSession, d.restoreSession),
+    loadingAnimation: oneOf(raw.loadingAnimation, ["eye", "tower"], d.loadingAnimation),
     autoUpdate: bool(raw.autoUpdate, d.autoUpdate),
     skippedUpdate: typeof raw.skippedUpdate === "string" ? raw.skippedUpdate.slice(0, 40) : d.skippedUpdate,
     editorFontSize: int(raw.editorFontSize, 10, 24, d.editorFontSize),
