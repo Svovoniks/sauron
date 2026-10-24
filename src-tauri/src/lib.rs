@@ -12,7 +12,7 @@ mod updater;
 
 use cancel::Registry;
 use model::{ConnectionParams, DbType, QueryResult, StatementOutcome, TestReport};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 const MAX_ROW_LIMIT: usize = 1_000_000;
 
@@ -166,6 +166,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            secrets::init(app.path().app_data_dir()?);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             execute_query,
             execute_script,

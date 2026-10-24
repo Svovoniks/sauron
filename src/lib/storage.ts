@@ -115,13 +115,13 @@ async function migrateLegacyStorage(messages: LoadResult["messages"]): Promise<A
   if (moved > 0) {
     messages.push({
       kind: "info",
-      text: `${moved} saved password${moved === 1 ? " was" : "s were"} moved from plain app storage to the system keychain.`,
+      text: `${moved} saved password${moved === 1 ? " was" : "s were"} moved from plain app storage to the secure password store.`,
     });
   }
   if (failures.length > 0) {
     messages.push({
       kind: "error",
-      text: `${failures.length} password${failures.length === 1 ? "" : "s"} could not be moved to the keychain (${failures[0]}). Re-enter ${failures.length === 1 ? "it" : "them"} by editing the connection.`,
+      text: `${failures.length} password${failures.length === 1 ? "" : "s"} could not be moved to the password store (${failures[0]}). Re-enter ${failures.length === 1 ? "it" : "them"} by editing the connection.`,
     });
   }
   return data;

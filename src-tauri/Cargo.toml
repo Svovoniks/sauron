@@ -1,6 +1,6 @@
 [package]
 name = "sauron"
-version = "0.4.2"
+version = "0.4.3"
 description = "database query app"
 authors = ["svovoniks"]
 edition = "2021"
@@ -30,3 +30,8 @@ reqwest = { version = "0.12", default-features = false, features = ["native-tls"
 uuid = { version = "1", features = ["v4"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "vendored"] }
 tauri-plugin-updater = "~2.9"
+
+# macOS keeps passwords in an encrypted file instead of the keychain (see src/secrets/vault.rs)
+[target.'cfg(target_os = "macos")'.dependencies]
+aes-gcm = "0.10"
+sha2 = "0.10"

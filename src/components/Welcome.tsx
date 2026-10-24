@@ -24,7 +24,7 @@ export function Welcome({ shortcuts, onConnect, onImport }: WelcomeProps) {
             <PlugIcon size={20} />
             <div>
               <b>Connect to a database</b>
-              <span>Fill in a form or paste a connection URL. Passwords go to your system keychain, never to a file.</span>
+              <span>Fill in a form or paste a connection URL. Passwords are stored apart from your connections, never in plain files.</span>
             </div>
           </button>
           <button className="choice" onClick={onImport} type="button">

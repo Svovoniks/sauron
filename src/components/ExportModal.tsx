@@ -13,7 +13,7 @@ export function ExportModal({ connectionCount, onClose, onExport, passwordsByDef
     <Modal onClose={onClose} title="Export">
       <div className="modal-form">
         <p className="modal-message">
-          Export connections, saved queries and saved results to a JSON file. Passwords are kept in the system keychain;
+          Export connections, saved queries and saved results to a JSON file. Passwords are left out;
           include them only if you need to move the connections to another machine.
         </p>
         {connectionCount > 0 && (
