@@ -309,3 +309,31 @@
   color: var(--faint);
   font-size: 11.5px;
 }
+
+.window-controls {
+  display: flex;
+  align-self: stretch;
+  flex: none;
+  /* Bleed into the bar and app padding so the buttons sit flush with the window edge, like native ones. */
+  margin: -8px calc(-8px - var(--app-inline-padding)) -8px 4px;
+}
+
+.window-controls button {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: default;
+}
+
+.window-controls button:hover {
+  background: var(--hover-strong);
+  color: var(--text-strong);
+}
+
+.window-controls .window-close:hover {
+  background: #e81123;
+  color: #fff;
+}

@@ -42,7 +42,7 @@ import { normalizeBackup } from "./lib/normalize";
 import { qualifiedName, type SchemaTable } from "./lib/schema";
 import { getPassword, hasPassword } from "./lib/secrets";
 import { monacoTheme } from "./lib/themes";
-import { accentOverride, comboText, DENSITY_ROW_HEIGHT, matchesCombo, matchesShortcut } from "./lib/settings";
+import { accentOverride, comboText, DENSITY_ROW_HEIGHT, isMac, matchesCombo, matchesShortcut } from "./lib/settings";
 import { isRiskyMetaCommand, isWriteStatement } from "./lib/sql/analyze";
 import { splitSqlRanges, splitSqlStatements } from "./lib/sql/splitStatements";
 import {
@@ -992,9 +992,10 @@ export default function App() {
   const startWindowDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    getCurrentWindow()
-      .startDragging()
-      .catch((error) => console.warn("Failed to start window drag.", error));
+    const win = getCurrentWindow();
+    // Double-clicking the title bar maximizes; macOS does that itself for the overlay title bar.
+    const action = event.detail === 2 && !isMac() ? win.toggleMaximize() : win.startDragging();
+    action.catch((error) => console.warn("Failed to start window drag.", error));
   };
 
   // --- derived view state -------------------------------------------------------------------
@@ -1114,7 +1115,7 @@ export default function App() {
 
   return (
     <div
-      className={`app-container ${layout.resizeAxis ? `resizing-layout resizing-layout-${layout.resizeAxis}` : ""}`}
+      className={`app-container ${isMac() ? "" : "integrated-titlebar"} ${layout.resizeAxis ? `resizing-layout resizing-layout-${layout.resizeAxis}` : ""}`}
       ref={layout.appContainerRef}
       style={layout.layoutStyle}
     >

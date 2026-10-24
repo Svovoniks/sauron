@@ -168,3 +168,9 @@ body {
 .workspace-layout[hidden] {
   display: none;
 }
+
+/* Windows / Linux: no native title bar, the connection bar is the title bar (window controls on its right). */
+.app-container.integrated-titlebar {
+  --titlebar-drag-height: 0px;
+  padding-top: 0;
+}
