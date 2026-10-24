@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { ConnStatus } from "../hooks/useConnectionStatus";
-import { comboText } from "../lib/settings";
+import { comboText, isMac } from "../lib/settings";
 import { ENV_LABEL, ENVS, type Connection, type Env } from "../types/app";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { BoltIcon, ChevronDownIcon, CopyIcon, DatabaseIcon, DotsIcon, DownloadIcon, EditIcon, GearIcon, LinkIcon, LockIcon, PlusIcon, TrashIcon, UploadIcon } from "./icons";
+import { WindowControls } from "./WindowControls";
 
 interface ConnectionTabsProps {
   connections: Connection[];
@@ -229,6 +230,7 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
         <PlusIcon size={15} />
       </button>
       </div>
+      {isMac() ? null : <WindowControls />}
       {menu ? <ContextMenu items={menu.items} onClose={() => setMenu(null)} x={menu.x} y={menu.y} /> : null}
     </div>
   );
