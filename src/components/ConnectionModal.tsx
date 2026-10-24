@@ -205,7 +205,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
               autoCorrect="off"
               id="password"
               onChange={(event) => patch({ password: event.target.value })}
-              placeholder={isEditing && hasSavedPassword ? "Saved in the keychain - click the eye to show it" : "Stored in the system keychain"}
+              placeholder={isEditing && hasSavedPassword ? "Saved - click the eye to show it" : "Stored securely on this computer"}
               type={showPassword ? "text" : "password"}
               value={draft.password}
             />

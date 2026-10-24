@@ -58,10 +58,13 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
  - the updater reads `latest.json` from the *latest published* release, so it only sees a release after you publish the draft;
    versions released before this feature existed have to be updated by hand once
 
-## macOS keychain prompts
- - macOS asks for the keychain password when an app whose code signature changed reads a saved password. Ad-hoc signed builds get a new
-   signature every build, so the release workflow signs the macOS app with a fixed self-signed certificate (`Sauron Self-Signed`) instead:
-   after one *Always Allow* per connection the prompts stop for good, across updates
+## macOS passwords
+ - macOS does not use the Keychain: it asks for the login password again after every update, once per saved connection, because it ties
+   each item to the exact build that created it (only a paid Apple Developer ID avoids that). Passwords are kept in an AES-256-GCM encrypted
+   file, `passwords.bin` in the app data directory (owner-only permissions, key derived from the Mac's hardware UUID), so nothing is ever asked.
+   It stops the file being copied to another Mac or restored from a backup, not a process running as you on the same Mac
+ - passwords saved by older versions are moved out of the Keychain the first time each connection is used (one last prompt per connection)
+ - the release workflow still signs the macOS app with a fixed self-signed certificate (`Sauron Self-Signed`), so the app keeps one identity
  - the certificate lives in the GitHub Actions secrets `MACOS_CODESIGN_P12` (base64 of the .p12) and `MACOS_CODESIGN_P12_PASSWORD`; keep the
    same certificate forever, a new one counts as a different app and brings the prompts back once. Local `bun tauri build` stays ad-hoc signed
 
@@ -69,9 +72,9 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
  - connections, saved queries and saved results are JSON files in the app data directory
    (macOS: `~/Library/Application Support/com.svovoniks.sauron/`); settings, query history and your open tabs are `settings.json`,
    `history.json` and `session.json` next to them. Settings -> Data & privacy shows the folder and clears the history
- - passwords are stored in the system keychain (macOS Keychain, Windows Credential Manager, Secret Service on Linux),
-   never in those files. Export asks whether to include them: "Include passwords" writes them into the JSON in **plain text**
-   (import puts them back into the keychain). In the connection form the eye icon shows the saved password
+ - passwords are stored apart from those files (Windows Credential Manager, Secret Service on Linux, an encrypted file on macOS),
+   never in them. Export asks whether to include them: "Include passwords" writes them into the JSON in **plain text**
+   (import puts them back into the password store). In the connection form the eye icon shows the saved password
  - Import adds the items of an export file to what you already have (items with the same id are replaced)
 
 ## Quick Demo:

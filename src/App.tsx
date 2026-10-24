@@ -509,7 +509,7 @@ export default function App() {
       connStatus.mark(id, { state: "", version: null });
     } else {
       selectConnectionTab({ ...draft, id } as Connection);
-      notify("info", `Connection saved${draft.read_only ? " · read-only" : ""}. ${draft.password ? "The password is in the system keychain." : ""}`.trim());
+      notify("info", `Connection saved${draft.read_only ? " · read-only" : ""}. ${draft.password ? "The password is stored securely on this computer." : ""}`.trim());
     }
   };
 
