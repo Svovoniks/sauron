@@ -433,10 +433,6 @@ td.row-number {
   color: var(--text-strong);
 }
 
-.ri-icon.on {
-  color: var(--warn);
-}
-
 .ri-icon.close:hover {
   background: color-mix(in srgb, var(--err) 25%, transparent);
   color: var(--err-text);
@@ -445,15 +441,6 @@ td.row-number {
 .ri-icon svg {
   width: 15px;
   height: 15px;
-}
-
-.pinned-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 6px;
-  font-size: 11px;
-  color: var(--warn);
 }
 
 .ri-tools {
@@ -631,6 +618,23 @@ td.row-number {
 .jt .jb { color: var(--j-bool); }
 .jt .jl { color: var(--j-null); }
 
+.jt-toggle {
+  display: block;
+  margin: 0 0 4px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  border: 1px solid var(--panel-line);
+  border-radius: calc(6px * var(--rs));
+  background: var(--field-bg);
+  color: var(--dim);
+  font: 11px var(--font-ui);
+  cursor: pointer;
+}
+
+.jt-toggle:hover {
+  color: var(--text);
+}
+
 .jt-line {
   padding-left: 14px;
 }
@@ -649,54 +653,6 @@ td.row-number {
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.cmp {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.cmp th {
-  position: static;
-  padding: 6px;
-  background: transparent;
-  text-align: left;
-  font-size: 11px;
-  color: var(--dim);
-  border-bottom: 1px solid var(--divider);
-  white-space: nowrap;
-}
-
-.cmp td {
-  max-width: none;
-  padding: 6px;
-  font: 11.5px "Monaco", "Menlo", monospace;
-  vertical-align: top;
-  word-break: break-word;
-}
-
-.cmp td:first-child {
-  font-family: var(--font-ui);
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.cmp tr.diff td:nth-child(2) {
-  background: color-mix(in srgb, var(--err) 12%, transparent);
-}
-
-.cmp tr.diff td:nth-child(3) {
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
-}
-
-.cmp tr.same {
-  color: var(--faint);
-}
-
-.cmp-note {
-  margin-top: 10px;
-  font-size: 12px;
 }
 
 .ri-foot {
@@ -736,8 +692,4 @@ td.row-number {
 
 .ri-foot .btn {
   flex: 1;
-}
-
-.record-row.pinned td:first-child {
-  box-shadow: inset 3px 0 0 var(--warn);
 }

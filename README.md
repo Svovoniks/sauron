@@ -43,8 +43,7 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
    save as a query. `Alt+Cmd/Ctrl+Left/Right` steps through earlier runs. Only SQL text is stored, never results
  - **Schema** (sidebar tab): tables, views and functions with row estimates, columns with types and keys; click a column to insert it, double-click a
    table to read it. The editor completes table and column names (it understands aliases: `o.` after `join orders o`)
- - **Record view**: JSON as a collapsible tree, arrays as tags, timestamps with "3 weeks ago", filter fields, hide nulls, pin a row and
-   Compare with another (`j` / `k` keep comparing), copy as JSON or INSERT
+ - **Record view**: JSON as a collapsible tree, arrays as tags, timestamps with "3 weeks ago", filter fields, hide nulls, copy as JSON or INSERT
  - **Errors point at the problem**: the failing statement is underlined in the editor, with the SQLSTATE, a caret snippet, "did you mean ...?" for
    a mistyped table or column, and timeout / disconnect / read-only explanations with the next step. `Cmd/Ctrl+.` cancels a running query
 

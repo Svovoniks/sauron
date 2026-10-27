@@ -4,16 +4,15 @@ import { embeddedJson, parseTimestamp, rowToInsert, rowToObject, typedValue } fr
 import { relativeTime } from "../lib/sql/analyze";
 import type { Cell, ColumnMeta } from "../types/app";
 import { cellText, detailValue } from "../utils/format";
-import { JsonTree } from "./JsonTree";
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, FilterIcon, PinIcon, SearchIcon } from "./icons";
+import { JsonView } from "./JsonTree";
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, FilterIcon, SearchIcon } from "./icons";
 
-type Mode = "fields" | "json" | "compare";
+type Mode = "fields" | "json";
 
 interface RecordInspectorProps {
   columns: ColumnMeta[];
   rows: Cell[][];
   selectedIndex: number;
-  pinnedIndex: number | null;
   /** Text typed in the results search box; fields that do not match are hidden. */
   searchTerm: string;
   prefs: { prettyJson: boolean; nullText: string };
@@ -21,7 +20,6 @@ interface RecordInspectorProps {
   tableName: string | null;
   dialect: "postgres" | "clickhouse";
   onStep: (delta: number) => void;
-  onPin: () => void;
   onClose: () => void;
   onCopy: (text: string, label: string) => void;
   /** "Show rows with this value": closes the record and searches the table for it. */
@@ -54,9 +52,7 @@ function FieldValue({ column, cell, prefs, term }: { column: ColumnMeta; cell: C
     const value = typedValue(column, cell);
     if (typeof value === "object" && value !== null) {
       return (
-        <div className="jt">
-          <JsonTree term={term} value={value} />
-        </div>
+        <JsonView term={term} value={value} />
       );
     }
   }
@@ -64,9 +60,7 @@ function FieldValue({ column, cell, prefs, term }: { column: ColumnMeta; cell: C
     const embedded = embeddedJson(cell);
     if (embedded) {
       return (
-        <div className="jt">
-          <JsonTree term={term} value={embedded} />
-        </div>
+        <JsonView term={term} value={embedded} />
       );
     }
   }
@@ -97,15 +91,12 @@ function FieldValue({ column, cell, prefs, term }: { column: ColumnMeta; cell: C
 }
 
 export function RecordInspector(props: RecordInspectorProps) {
-  const { columns, rows, selectedIndex, pinnedIndex, searchTerm, prefs } = props;
+  const { columns, rows, selectedIndex, searchTerm, prefs } = props;
   const row = rows[selectedIndex] ?? [];
   const [mode, setMode] = useState<Mode>("fields");
   const [fieldFilter, setFieldFilter] = useState("");
   const [hideNulls, setHideNulls] = useState(false);
-  const [onlyDiff, setOnlyDiff] = useState(true);
 
-  const canCompare = pinnedIndex !== null && pinnedIndex !== selectedIndex && pinnedIndex < rows.length;
-  const effectiveMode: Mode = mode === "compare" && !canCompare ? "fields" : mode;
   const filter = fieldFilter.trim().toLowerCase();
 
   const visibleFields = useMemo(
@@ -123,8 +114,6 @@ export function RecordInspector(props: RecordInspectorProps) {
   );
 
   const json = useMemo(() => JSON.stringify(rowToObject(columns, row), null, 2), [columns, row]);
-  const pinnedRow = canCompare ? rows[pinnedIndex!] : null;
-  const diffCount = pinnedRow ? columns.filter((_, i) => (pinnedRow[i] ?? null) !== (row[i] ?? null)).length : 0;
 
   return (
     <div className="inspector">
@@ -139,11 +128,7 @@ export function RecordInspector(props: RecordInspectorProps) {
         <button aria-label="Next record" className="ri-icon" onClick={() => props.onStep(1)} title="Next (j)" type="button">
           <ChevronRightIcon size={15} />
         </button>
-        {pinnedIndex !== null ? <span className="pinned-badge"><PinIcon size={12} />pinned row {pinnedIndex + 1}</span> : null}
         <span className="sp" />
-        <button aria-label={pinnedIndex === selectedIndex ? "Unpin this row" : "Pin this row to compare"} className={`ri-icon ${pinnedIndex === selectedIndex ? "on" : ""}`} onClick={props.onPin} title="Pin this row to compare" type="button">
-          <PinIcon size={15} />
-        </button>
         <button aria-label="Close details" className="ri-icon close" onClick={props.onClose} title="Close (Esc)" type="button">
           <CloseIcon />
         </button>
@@ -151,18 +136,15 @@ export function RecordInspector(props: RecordInspectorProps) {
 
       <div className="ri-tools">
         <div className="seg" role="group" aria-label="Record view">
-          <button className={effectiveMode === "fields" ? "active" : ""} onClick={() => setMode("fields")} type="button">
+          <button className={mode === "fields" ? "active" : ""} onClick={() => setMode("fields")} type="button">
             Fields
           </button>
-          <button className={effectiveMode === "json" ? "active" : ""} onClick={() => setMode("json")} type="button">
+          <button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")} type="button">
             JSON
-          </button>
-          <button className={effectiveMode === "compare" ? "active" : ""} disabled={!canCompare} onClick={() => setMode("compare")} title={canCompare ? "Compare with the pinned row" : "Pin a row first, then open another"} type="button">
-            Compare
           </button>
         </div>
       </div>
-      {effectiveMode === "fields" ? (
+      {mode === "fields" ? (
         <div className="ri-tools">
           <label className="panel-search">
             <SearchIcon />
@@ -174,17 +156,9 @@ export function RecordInspector(props: RecordInspectorProps) {
           </label>
         </div>
       ) : null}
-      {effectiveMode === "compare" ? (
-        <div className="ri-tools">
-          <label className="ri-check">
-            <input checked={onlyDiff} onChange={(event) => setOnlyDiff(event.target.checked)} type="checkbox" />
-            Only differences
-          </label>
-        </div>
-      ) : null}
 
       <div className="ri-body">
-        {effectiveMode === "fields" ? (
+        {mode === "fields" ? (
           visibleFields.length > 0 ? (
             visibleFields.map(({ column, index, cell }) => {
               const detail = detailValue(column.type, cell, { prettyJson: prefs.prettyJson, nullText: prefs.nullText });
@@ -217,41 +191,7 @@ export function RecordInspector(props: RecordInspectorProps) {
           )
         ) : null}
 
-        {effectiveMode === "json" ? <pre className="raw">{highlight(json, searchTerm)}</pre> : null}
-
-        {effectiveMode === "compare" && pinnedRow ? (
-          <>
-            <table className="cmp">
-              <thead>
-                <tr>
-                  <th>field</th>
-                  <th>
-                    <PinIcon size={11} /> row {pinnedIndex! + 1}
-                  </th>
-                  <th>row {selectedIndex + 1}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {columns.map((column, i) => {
-                  const a = pinnedRow[i] ?? null;
-                  const b = row[i] ?? null;
-                  const same = a === b;
-                  if (same && onlyDiff) return null;
-                  return (
-                    <tr className={same ? "same" : "diff"} key={i}>
-                      <td>{column.name}</td>
-                      <td>{cellText(a, prefs.nullText)}</td>
-                      <td>{cellText(b, prefs.nullText)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p className="muted cmp-note">
-              {diffCount} of {columns.length} fields differ. <kbd>j</kbd> / <kbd>k</kbd> keeps comparing against the pinned row.
-            </p>
-          </>
-        ) : null}
+        {mode === "json" ? <pre className="raw">{highlight(json, searchTerm)}</pre> : null}
       </div>
 
       <div className="ri-foot">

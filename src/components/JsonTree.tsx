@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 const mark = (text: string, term: string): ReactNode => {
   if (!term) return text;
@@ -86,5 +86,33 @@ export function JsonTree({ value, depth = 0, name, term = "" }: JsonTreeProps): 
       ))}
       <div className="jt-close">{isArray ? "]" : "}"}</div>
     </details>
+  );
+}
+
+/** `JsonTree` in its `.jt` frame, with a button that folds every nested branch or unfolds them all. */
+export function JsonView({ value, term = "" }: { value: unknown; term?: string }): ReactNode {
+  const root = useRef<HTMLDivElement>(null);
+  const [folded, setFolded] = useState(false);
+  const nested = typeof value === "object" && value !== null && Object.keys(value).length > 0;
+
+  const toggle = () => {
+    const all = Array.from(root.current?.querySelectorAll("details") ?? []);
+    // Unfold if anything is folded; otherwise fold everything below the root.
+    const open = all.some((d) => !d.open);
+    all.forEach((d, i) => {
+      d.open = open || i === 0;
+    });
+    setFolded(!open);
+  };
+
+  return (
+    <div className="jt" ref={root}>
+      {nested ? (
+        <button className="jt-toggle" onClick={toggle} type="button">
+          {folded ? "Expand all" : "Collapse all"}
+        </button>
+      ) : null}
+      <JsonTree term={term} value={value} />
+    </div>
   );
 }
