@@ -47,6 +47,21 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
  - **Errors point at the problem**: the failing statement is underlined in the editor, with the SQLSTATE, a caret snippet, "did you mean ...?" for
    a mistyped table or column, and timeout / disconnect / read-only explanations with the next step. `Cmd/Ctrl+.` cancels a running query
 
+## AI agents (MCP)
+ - Sauron is also an MCP server, so an agent (Claude Code, Cursor, Claude Desktop, ...) can use your saved connections. The agent starts the
+   app's own executable with `--mcp`: no window opens, it speaks MCP over stdin / stdout, and the app does not have to be running
+ - Settings -> AI agents copies the setup. For Claude Code on a Mac that is
+   `claude mcp add sauron -- /Applications/sauron.app/Contents/MacOS/sauron --mcp`, for Codex the same with `codex mcp add`; other agents take an `mcpServers` entry with the same
+   command and `"args": ["--mcp"]`
+ - tools: `list_connections`, `list_tables`, `describe_table` and `query` (one statement, 100 rows by default, at most 1,000). Connections are
+   picked by name, and the agent never sees a password
+ - **read-only by default**: only SELECT / WITH / SHOW / EXPLAIN / DESCRIBE / VALUES are accepted, the session is read-only on the server, and
+   on Postgres every statement runs inside `BEGIN READ ONLY ... ROLLBACK`. Add `--allow-writes` after `--mcp` to let the agent write;
+   connections that are read-only or tagged prod stay read-only. A connection without a timeout gets 60 seconds
+ - **Agent** (sidebar tab): every call an agent made, live while the app is open: the SQL, connection, time, duration and which agent,
+   with errors and refused writes marked. Click a call to see the exact text it got back; a table result opens in a new query tab.
+   The log is `agent-log/` in the app data folder (last 500 calls, kept as long as query history; history "off" turns it off too)
+
 ## Updates
  - Sauron checks GitHub releases once at launch (Settings -> General -> "Check for updates automatically") and asks before it downloads
    anything: *Download & install*, *Later* or *Skip this version*, then *Restart now*. Settings -> About has a "Check for updates" button

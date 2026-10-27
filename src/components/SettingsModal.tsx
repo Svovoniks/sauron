@@ -14,7 +14,7 @@ import { hasAppearance, paletteOf, THEMES, themeById, type Appearance } from "..
 import { Modal } from "./Modal";
 import { CloseIcon, SearchIcon, WarningIcon } from "./icons";
 
-export type SettingsSection = "general" | "editor" | "results" | "connections" | "psql" | "shortcuts" | "data" | "about";
+export type SettingsSection = "general" | "editor" | "results" | "connections" | "psql" | "agents" | "shortcuts" | "data" | "about";
 
 interface Option {
   value: string;
@@ -29,7 +29,7 @@ type Control =
   | { type: "select"; key: keyof Settings; options: Option[]; numeric?: boolean; suffix?: string }
   | { type: "text"; key: keyof Settings; placeholder?: string; wide?: boolean }
   | { type: "keys"; id: ShortcutId }
-  | { type: "button"; text: string; action: "export" | "import" | "clearHistory" | "copyFolder" | "checkUpdate"; danger?: boolean }
+  | { type: "button"; text: string; action: "export" | "import" | "clearHistory" | "copyFolder" | "checkUpdate" | "copyMcpClaude" | "copyMcpCodex" | "copyMcpJson"; danger?: boolean }
   | { type: "value"; text: string };
 
 export interface Row {
@@ -45,6 +45,16 @@ export interface Section {
   sub: string;
   rows: Row[];
   callout?: string;
+}
+
+/** How an agent starts Sauron's MCP server: the app's own executable with `--mcp`. */
+export function mcpSetup(executable: string): { claude: string; codex: string; json: string } {
+  const quoted = `"${executable.replace(/(["\\$`])/g, "\\$1")}"`;
+  return {
+    claude: `claude mcp add sauron -- ${quoted} --mcp`,
+    codex: `codex mcp add sauron -- ${quoted} --mcp`,
+    json: JSON.stringify({ mcpServers: { sauron: { command: executable, args: ["--mcp"] } } }, null, 2),
+  };
 }
 
 const opts = (...values: string[]): Option[] => values.map((value) => ({ value, label: value }));
@@ -144,6 +154,17 @@ export const settingsSections = (version: string): Section[] => [
     callout: "psql commands are not sandboxed. Keep the warning on unless you only run commands you wrote yourself.",
   },
   {
+    id: "agents",
+    title: "AI agents (MCP)",
+    sub: "Let an agent (Claude Code, Codex, Cursor, Claude Desktop, ...) list your connections, read the schema and run queries.",
+    rows: [
+      { id: "mcpClaude", label: "Add to Claude Code", desc: "Copies the claude mcp add command.", control: { type: "button", text: "Copy command", action: "copyMcpClaude" } },
+      { id: "mcpCodex", label: "Add to Codex", desc: "Copies the codex mcp add command.", control: { type: "button", text: "Copy command", action: "copyMcpCodex" } },
+      { id: "mcpJson", label: "Add to another agent", desc: "Copies an mcpServers entry for the agent's MCP config file.", control: { type: "button", text: "Copy JSON", action: "copyMcpJson" } },
+    ],
+    callout: "Agents never see passwords and only get read access. Add --allow-writes to the command to let them write; connections that are read-only or prod stay read-only.",
+  },
+  {
     id: "shortcuts",
     title: "Shortcuts",
     sub: "Click a shortcut, then press the new keys. Esc cancels.",
@@ -207,6 +228,8 @@ export interface SettingsModalProps {
   focusRow?: string;
   version: string;
   dataDir: string | null;
+  /** Path of the running executable, for the MCP setup commands. */
+  mcpExecutable: string | null;
   historyCount: number;
   onChange: (patch: Partial<Settings>) => void;
   onReset: () => void;
@@ -217,7 +240,7 @@ export interface SettingsModalProps {
   updateStatus: string;
   checkingUpdate: boolean;
   onCheckUpdate: () => void;
-  onCopy: (text: string) => void;
+  onCopy: (text: string, label: string) => void;
   onClose: () => void;
 }
 
@@ -473,13 +496,16 @@ export function SettingsModal(props: SettingsModalProps) {
         return (
           <button
             className={`btn settings-button ${c.danger ? "danger" : ""}`}
-            disabled={c.action === "checkUpdate" && props.checkingUpdate}
+            disabled={(c.action === "checkUpdate" && props.checkingUpdate) || (c.action.startsWith("copyMcp") && !props.mcpExecutable)}
             onClick={() => {
               if (c.action === "export") props.onExport();
               else if (c.action === "import") props.onImport();
               else if (c.action === "clearHistory") props.onClearHistory();
               else if (c.action === "checkUpdate") props.onCheckUpdate();
-              else if (props.dataDir) props.onCopy(props.dataDir);
+              else if (c.action === "copyMcpClaude" && props.mcpExecutable) props.onCopy(mcpSetup(props.mcpExecutable).claude, "the Claude Code command");
+              else if (c.action === "copyMcpCodex" && props.mcpExecutable) props.onCopy(mcpSetup(props.mcpExecutable).codex, "the Codex command");
+              else if (c.action === "copyMcpJson" && props.mcpExecutable) props.onCopy(mcpSetup(props.mcpExecutable).json, "the MCP config");
+              else if (c.action === "copyFolder" && props.dataDir) props.onCopy(props.dataDir, "the folder path");
             }}
             type="button"
           >
@@ -493,6 +519,8 @@ export function SettingsModal(props: SettingsModalProps) {
 
   const describe = (row: Row): string => {
     if (row.id === "folder") return props.dataDir ?? row.desc;
+    if (row.id === "mcpClaude" && props.mcpExecutable) return mcpSetup(props.mcpExecutable).claude;
+    if (row.id === "mcpCodex" && props.mcpExecutable) return mcpSetup(props.mcpExecutable).codex;
     if (row.id === "version" && props.updateStatus) return `${row.desc} · ${props.updateStatus}`;
     if (row.id === "clearHistory") return `${props.historyCount.toLocaleString("en-US")} entr${props.historyCount === 1 ? "y" : "ies"}.`;
     return row.desc;
