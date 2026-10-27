@@ -415,7 +415,7 @@ export function DataView({
           <div className="table-header">
             <h3>
               Query Results
-              {run?.savedResultName ? <span className="result-source">saved result “{run.savedResultName}”</span> : null}
+              {run?.resultSource ? <span className="result-source">{run.resultSource}</span> : null}
             </h3>
             <div className="table-header-tools">
               {showTable && rows.length > 0 && (

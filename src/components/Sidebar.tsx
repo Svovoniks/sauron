@@ -4,15 +4,18 @@ import { comboText } from "../lib/settings";
 import { GripIcon, RefreshIcon, TrashIcon } from "./icons";
 
 export type SaveScope = "local" | "global";
-export type SidebarMode = "saved" | "history" | "schema";
+export type SidebarMode = "saved" | "history" | "agent" | "schema";
 type ItemType = "query" | "result";
 
 interface SidebarProps {
   mode: SidebarMode;
   onSetMode: (mode: SidebarMode) => void;
-  /** Panels for the History and Schema modes. */
+  /** Panels for the History, Agent and Schema modes. */
   historyPanel: ReactNode;
+  agentPanel: ReactNode;
   schemaPanel: ReactNode;
+  /** Agent calls since the Agent tab was last open (a badge on the tab). */
+  agentUnseen: number;
   /** Shortcut hint for the empty "no saved queries" state. */
   saveShortcut: string;
   activeSaveScope: SaveScope;
@@ -117,7 +120,9 @@ export function Sidebar({
   mode,
   onSetMode,
   historyPanel,
+  agentPanel,
   schemaPanel,
+  agentUnseen,
   saveShortcut,
   activeSaveScope,
   activeSidebarTab,
@@ -158,13 +163,14 @@ export function Sidebar({
   return (
     <div className="sidebar">
       <div className="sidebar-modes" role="tablist">
-        {(["saved", "history", "schema"] as const).map((m) => (
-          <button aria-selected={mode === m} className={mode === m ? "active" : ""} key={m} onClick={() => onSetMode(m)} role="tab" type="button">
-            {m === "saved" ? "Saved" : m === "history" ? "History" : "Schema"}
+        {(["saved", "history", "agent", "schema"] as const).map((m) => (
+          <button aria-selected={mode === m} className={mode === m ? "active" : ""} key={m} onClick={() => onSetMode(m)} role="tab" title={m === "agent" ? "What AI agents did through MCP" : undefined} type="button">
+            {m === "saved" ? "Saved" : m === "history" ? "History" : m === "agent" ? "Agent" : "Schema"}
+            {m === "agent" && agentUnseen > 0 && mode !== "agent" ? <span className="mode-badge">{agentUnseen > 99 ? "99+" : agentUnseen}</span> : null}
           </button>
         ))}
       </div>
-      {mode === "history" ? historyPanel : mode === "schema" ? schemaPanel : (
+      {mode === "history" ? historyPanel : mode === "agent" ? agentPanel : mode === "schema" ? schemaPanel : (
         <>
           <div className="sidebar-header">
             <h3>Saved Stuff</h3>

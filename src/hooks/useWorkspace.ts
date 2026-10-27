@@ -254,7 +254,7 @@ export function useWorkspace(options: Options) {
         activeSet: 0,
         meta: null,
         error: null,
-        savedResultName: null,
+        resultSource: null,
         timeoutSecs: request.timeoutSecs ?? null,
       };
       setRun(tabId, base);
@@ -317,7 +317,7 @@ export function useWorkspace(options: Options) {
   }, [finish]);
 
   const showSavedResult = useCallback(
-    (tabId: string, result: QueryResult, name: string, connectionId: string | null, connectionName: string, sql: string) => {
+    (tabId: string, result: QueryResult, source: string, connectionId: string | null, connectionName: string, sql: string) => {
       setRun(tabId, {
         status: "done",
         startedAt: Date.now(),
@@ -331,7 +331,7 @@ export function useWorkspace(options: Options) {
         activeSet: 0,
         meta: null,
         error: null,
-        savedResultName: name,
+        resultSource: source,
         timeoutSecs: null,
       });
     },
@@ -340,7 +340,7 @@ export function useWorkspace(options: Options) {
 
   const reportError = useCallback(
     (tabId: string, message: string) =>
-      setRun(tabId, { status: "done", startedAt: Date.now(), finishedAt: Date.now(), connectionId: "", connectionName: "", runSql: "", runOffset: -1, rowLimit: 0, sets: [], activeSet: 0, meta: null, error: message, savedResultName: null, timeoutSecs: null }),
+      setRun(tabId, { status: "done", startedAt: Date.now(), finishedAt: Date.now(), connectionId: "", connectionName: "", runSql: "", runOffset: -1, rowLimit: 0, sets: [], activeSet: 0, meta: null, error: message, resultSource: null, timeoutSecs: null }),
     [setRun],
   );
 

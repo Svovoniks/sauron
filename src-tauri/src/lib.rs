@@ -1,5 +1,7 @@
+mod agent_log;
 mod cancel;
 mod clickhouse;
+mod mcp;
 mod meta;
 mod model;
 mod postgres;
@@ -158,6 +160,46 @@ async fn storage_quarantine(app: AppHandle, name: String) -> Result<Option<Strin
     storage::quarantine(&app, &name).await
 }
 
+/// What agents did through `sauron --mcp`, newest first (the Agent tab).
+#[tauri::command]
+async fn agent_log_list(app: AppHandle) -> Result<Vec<agent_log::Entry>, String> {
+    let dir = storage::dir(&app)?;
+    tokio::task::spawn_blocking(move || agent_log::list(&dir)).await.map_err(|e| e.to_string())
+}
+
+/// Id of the newest agent call, cheap enough to poll for the "new calls" badge.
+#[tauri::command]
+async fn agent_log_latest(app: AppHandle) -> Result<Option<String>, String> {
+    let dir = storage::dir(&app)?;
+    tokio::task::spawn_blocking(move || agent_log::latest(&dir)).await.map_err(|e| e.to_string())
+}
+
+/// The rows an agent got for one call, `None` when that call returned no table.
+#[tauri::command]
+async fn agent_log_result(app: AppHandle, id: String) -> Result<Option<agent_log::Table>, String> {
+    let dir = storage::dir(&app)?;
+    tokio::task::spawn_blocking(move || agent_log::result(&dir, &id)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn agent_log_clear(app: AppHandle) -> Result<(), String> {
+    let dir = storage::dir(&app)?;
+    tokio::task::spawn_blocking(move || agent_log::clear(&dir)).await.map_err(|e| e.to_string())?
+}
+
+/// The executable the agent has to start for the MCP server (shown in Settings).
+#[tauri::command]
+fn mcp_executable() -> Result<String, String> {
+    std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// `sauron --mcp [--allow-writes]`: an MCP server on stdin / stdout for AI agents, no window (see `mcp.rs`).
+pub fn run_mcp(allow_writes: bool) -> Result<(), String> {
+    mcp::run(allow_writes)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -184,6 +226,11 @@ pub fn run() {
             storage_write,
             storage_quarantine,
             storage_dir,
+            mcp_executable,
+            agent_log_list,
+            agent_log_latest,
+            agent_log_result,
+            agent_log_clear,
             updater::check_for_update,
             updater::install_update,
             updater::restart_app,

@@ -11,6 +11,7 @@ import { ConnectionTabs, OPEN_SWITCHER_EVENT } from "./components/ConnectionTabs
 import { ContextMenu, type MenuItem } from "./components/ContextMenu";
 import { DataView } from "./components/DataView";
 import { ExportModal } from "./components/ExportModal";
+import { AgentPanel } from "./components/AgentPanel";
 import { HistoryPanel, normalizeSql } from "./components/HistoryPanel";
 import { Notices } from "./components/Notices";
 import { ProdGuardModal } from "./components/ProdGuardModal";
@@ -25,6 +26,7 @@ import { UpdateModal } from "./components/UpdateModal";
 import { Welcome } from "./components/Welcome";
 import { useAppData } from "./hooks/useAppData";
 import { useConnectionStatus } from "./hooks/useConnectionStatus";
+import { useAgentLog } from "./hooks/useAgentLog";
 import { useHistory } from "./hooks/useHistory";
 import { useLayoutResize } from "./hooks/useLayoutResize";
 import { useNotices } from "./hooks/useNotices";
@@ -37,6 +39,7 @@ import { itemsOf } from "./lib/appDataOps";
 import { formatConnectionUrl } from "./lib/connUrl";
 import { isMetaCommand, MAX_ROW_LIMIT, testConnection } from "./lib/db/query";
 import { findIdentifier, tokenLengthAt } from "./lib/errors";
+import type { AgentEntry } from "./lib/agentLog";
 import { dayLabel, timeLabel, type HistoryEntry } from "./lib/history";
 import { normalizeBackup } from "./lib/normalize";
 import { qualifiedName, type SchemaTable } from "./lib/schema";
@@ -108,6 +111,7 @@ export default function App() {
   const [activeSaveScope, setActiveSaveScope] = useState<SaveScope>("local");
   const [activeSidebarTab, setActiveSidebarTab] = useState<"queries" | "results">("queries");
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("saved");
+  const agentLog = useAgentLog(sidebarMode === "agent", notifyError);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
   const [restoredNotes, setRestoredNotes] = useState<Record<string, string>>({});
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
@@ -121,10 +125,11 @@ export default function App() {
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [pendingGuard, setPendingGuard] = useState<{ request: RunRequest; writes: string[] } | null>(null);
   const [pendingRisky, setPendingRisky] = useState<RunRequest | null>(null);
-  const [pendingClose, setPendingClose] = useState<string[] | null>(null);
   const [pendingClearHistory, setPendingClearHistory] = useState(false);
+  const [pendingClearAgentLog, setPendingClearAgentLog] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [dataDir, setDataDir] = useState<string | null>(null);
+  const [mcpExecutable, setMcpExecutable] = useState<string | null>(null);
   const [showUpdate, setShowUpdate] = useState(false);
 
   const updater = useUpdater({
@@ -229,7 +234,7 @@ export default function App() {
     return set;
   }, [data, activeConnection?.id]);
 
-  const modalOpen = Boolean(connectionModal || savePrompt || showSaveResultModal || showExportModal || pendingDelete || settingsModal || palette || pendingGuard || pendingRisky || pendingClose || pendingClearHistory || updateDialogOpen);
+  const modalOpen = Boolean(connectionModal || savePrompt || showSaveResultModal || showExportModal || pendingDelete || settingsModal || palette || pendingGuard || pendingRisky || pendingClearHistory || pendingClearAgentLog || updateDialogOpen);
   const modalOpenRef = useRef(modalOpen);
   modalOpenRef.current = modalOpen;
   const paletteOpenRef = useRef(false);
@@ -444,18 +449,6 @@ export default function App() {
     setSelectedIndex(null);
   };
 
-  /** A tab with text that was never run (so it is not in the history) and is not a saved query. */
-  const unsavedScratch = (id: string) => {
-    const tab = ws.tabs.find((t) => t.id === id);
-    return Boolean(tab && !tab.savedQueryId && tab.sql.trim() && tab.sql.trim() !== "SELECT 1" && !ws.runs[id]);
-  };
-
-  const requestCloseTabs = (ids: string[]) => {
-    const unsaved = ids.filter((id) => ws.dirtyTabs.has(id) || unsavedScratch(id));
-    if (unsaved.length > 0) setPendingClose(ids);
-    else closeTabsNow(ids);
-  };
-
   const tabMenuItems = (id: string): MenuItem[] => {
     const tab = ws.tabs.find((t) => t.id === id);
     if (!tab) return [];
@@ -465,8 +458,8 @@ export default function App() {
       { label: "Duplicate", onSelect: () => ws.duplicateTab(id) },
       { label: "Save as query…", onSelect: () => setSavePrompt({ sql: tab.sql, initialName: tab.name.startsWith("untitled") ? "" : tab.name, linkTab: id === ws.activeTabId }) },
       { type: "separator" },
-      { label: "Close", onSelect: () => requestCloseTabs([id]) },
-      { label: "Close others", disabled: others.length === 0, onSelect: () => requestCloseTabs(others) },
+      { label: "Close", onSelect: () => closeTabsNow([id]) },
+      { label: "Close others", disabled: others.length === 0, onSelect: () => closeTabsNow(others) },
     ];
   };
 
@@ -667,7 +660,7 @@ export default function App() {
     setSelectedIndex(null);
     const scopeConnection = sidebarScope === GLOBAL_SCOPE ? null : sidebarScope;
     const name = data.connections.find((c) => c.id === scopeConnection)?.name ?? "";
-    ws.showSavedResult(activeTab.id, { columns: saved.columns, rows: saved.rows, truncated: saved.truncated, message: null }, saved.name, scopeConnection, name, saved.query);
+    ws.showSavedResult(activeTab.id, { columns: saved.columns, rows: saved.rows, truncated: saved.truncated, message: null }, `saved result “${saved.name}”`, scopeConnection, name, saved.query);
     if (activeTab.savedQueryId) ws.patchTab(activeTab.id, { savedQueryId: null, savedScope: null });
     editor.replaceText(saved.query);
   };
@@ -685,6 +678,21 @@ export default function App() {
       ? { title: "Delete Query", message: `Are you sure you want to delete ${scopeLabel}saved query "${pendingDelete.item.name}"?` }
       : { title: "Delete Result", message: `Are you sure you want to delete ${scopeLabel}saved result "${pendingDelete.item.name}"?` };
   })();
+
+  // --- agent activity ---------------------------------------------------------------------------
+  /** An agent call opens in a new tab, so the user's own editor text and results stay as they are. */
+  const openAgentTab = (entry: AgentEntry) => {
+    const connection = data.connections.find((c) => c.id === entry.connection_id);
+    return ws.addTab({ name: `Agent ${timeLabel(entry.at)}`, connectionId: connection?.id ?? activeTab?.connectionId ?? null, sql: entry.sql });
+  };
+
+  const openAgentResult = async (entry: AgentEntry) => {
+    const table = await agentLog.result(entry.id);
+    if (!table) return notifyError("The result of this call is no longer stored.");
+    const tab = openAgentTab(entry);
+    const source = `agent result · ${entry.client || "agent"}, ${dayLabel(entry.at).toLowerCase()} ${timeLabel(entry.at)}`;
+    ws.showSavedResult(tab.id, table, source, tab.connectionId, entry.connection_name, entry.sql);
+  };
 
   // --- history ----------------------------------------------------------------------------------
   const restoreEntry = (entry: HistoryEntry, silent = false) => {
@@ -807,6 +815,7 @@ export default function App() {
     setPalette(null);
     setSettingsModal({ section, focusRow });
     invoke<string>("storage_dir").then(setDataDir).catch(() => setDataDir(null));
+    invoke<string>("mcp_executable").then(setMcpExecutable).catch(() => setMcpExecutable(null));
   }, []);
 
   /** Manual check: an available update opens the dialog, anything else is reported in a notice. */
@@ -825,7 +834,7 @@ export default function App() {
       { id: "a-explain", group: "Actions", icon: I.info, label: "Explain statement at cursor", kbd: comboText("Mod+Alt+Enter"), run: () => runRef.current("explain") },
       { id: "a-save", group: "Actions", icon: I.save, label: "Save query", kbd: comboText(k.save), run: saveActiveQuery },
       { id: "a-tab", group: "Actions", icon: I.plus, label: "New tab", kbd: comboText("Mod+T"), run: () => newTab() },
-      { id: "a-closetab", group: "Actions", icon: I.close, label: "Close tab", kbd: comboText("Mod+Shift+W"), run: () => activeTab && requestCloseTabs([activeTab.id]) },
+      { id: "a-closetab", group: "Actions", icon: I.close, label: "Close tab", kbd: comboText("Mod+Shift+W"), run: () => activeTab && closeTabsNow([activeTab.id]) },
       { id: "a-file", group: "Actions", icon: I.file, label: "Open .sql file…", run: () => void openSqlFile() },
       { id: "a-newconn", group: "Actions", icon: I.plus, label: "New connection…", run: () => addConnection() },
       { id: "a-url", group: "Actions", icon: I.link, label: "New connection from URL…", run: () => addConnection(true) },
@@ -833,6 +842,7 @@ export default function App() {
       { id: "a-import", group: "Actions", icon: I.upload, label: "Import from file…", run: () => void importConnections() },
       { id: "a-schema", group: "Actions", icon: I.db, label: "Show schema", run: () => setSidebarMode("schema") },
       { id: "a-history", group: "Actions", icon: I.clock, label: "Show query history", run: () => setSidebarMode("history") },
+      { id: "a-agent", group: "Actions", icon: I.clock, label: "Show agent activity", run: () => setSidebarMode("agent") },
       { id: "a-reload", group: "Actions", icon: I.refresh, label: "Reload schema", run: () => activeConnection && void schemas.load(activeConnection, true) },
       { id: "a-update", group: "Actions", icon: I.download, label: "Check for updates", run: checkUpdateNow },
       { id: "a-settings", group: "Actions", icon: I.gear, label: "Open settings", kbd: comboText(k.settings), run: () => openSettings() },
@@ -930,7 +940,7 @@ export default function App() {
       return handled();
     }
     if (mod && event.shiftKey && event.key.toLowerCase() === "w") {
-      if (ws.activeTabId) requestCloseTabs([ws.activeTabId]);
+      if (ws.activeTabId) closeTabsNow([ws.activeTabId]);
       return handled();
     }
     if (event.ctrlKey && event.key === "Tab") {
@@ -1059,7 +1069,7 @@ export default function App() {
     onOpenSettings: (section: "connections" | "results" | "editor" | "psql") => openSettings(section),
   };
 
-  const canLoadMore = Boolean(activeResult?.truncated && activeRun && activeRun.runOffset >= 0 && !activeRun.savedResultName && activeRun.rowLimit < MAX_ROW_LIMIT && activeConnection);
+  const canLoadMore = Boolean(activeResult?.truncated && activeRun && activeRun.runOffset >= 0 && !activeRun.resultSource && activeRun.rowLimit < MAX_ROW_LIMIT && activeConnection);
   const tableName = guessTable(activeSet?.sql);
 
   const sidebarPanel = (
@@ -1068,6 +1078,18 @@ export default function App() {
       activeResultId={activeResultId}
       activeSaveScope={activeSaveScope}
       activeSidebarTab={activeSidebarTab}
+      agentPanel={
+        <AgentPanel
+          activeConnectionId={activeConnection?.id ?? null}
+          entries={agentLog.entries}
+          onClear={() => setPendingClearAgentLog(true)}
+          onCopy={(text) => copy(text, "the SQL")}
+          onEdit={(entry) => openAgentTab(entry)}
+          onOpenResult={(entry) => void openAgentResult(entry)}
+          onSetup={() => openSettings("agents")}
+        />
+      }
+      agentUnseen={agentLog.unseen}
       historyPanel={
         <HistoryPanel
           activeConnectionId={activeConnection?.id ?? null}
@@ -1229,7 +1251,7 @@ export default function App() {
                 connections={data.connections}
                 dirtyIds={ws.dirtyTabs}
                 highlightProd={settings.highlightProd}
-                onClose={(id) => requestCloseTabs([id])}
+                onClose={(id) => closeTabsNow([id])}
                 onContextMenu={(id, x, y) => setTabMenu({ id, x, y })}
                 onNew={() => newTab()}
                 onRename={(id, name) => ws.patchTab(id, { name })}
@@ -1299,20 +1321,16 @@ export default function App() {
         <ConfirmModal confirmText="Delete" message={deleteModalText.message} onClose={() => setPendingDelete(null)} onConfirm={confirmDelete} title={deleteModalText.title} />
       )}
 
-      {pendingClose && (
+      {pendingClearAgentLog && (
         <ConfirmModal
-          confirmText="Close without saving"
-          message={(() => {
-            const risky = pendingClose.filter((id) => ws.dirtyTabs.has(id) || unsavedScratch(id));
-            const name = ws.tabs.find((t) => t.id === risky[0])?.name;
-            return risky.length === 1 ? `“${name}” has text that is not saved (and was never run, so it is not in the history either).` : "Some of these tabs have text that is not saved.";
-          })()}
-          onClose={() => setPendingClose(null)}
+          confirmText="Clear"
+          message={`Delete all ${agentLog.entries.length.toLocaleString("en-US")} recorded agent calls and their results?`}
+          onClose={() => setPendingClearAgentLog(false)}
           onConfirm={() => {
-            closeTabsNow(pendingClose);
-            setPendingClose(null);
+            void agentLog.clear();
+            setPendingClearAgentLog(false);
           }}
-          title="Unsaved changes"
+          title="Clear agent activity"
         />
       )}
 
@@ -1362,6 +1380,7 @@ export default function App() {
       {settingsModal && (
         <SettingsModal
           dataDir={dataDir}
+          mcpExecutable={mcpExecutable}
           focusRow={settingsModal.focusRow}
           historyCount={history.entries.length}
           initialSection={settingsModal.section}
@@ -1374,7 +1393,7 @@ export default function App() {
             setPendingClearHistory(true);
           }}
           onClose={() => setSettingsModal(null)}
-          onCopy={(text) => copy(text, "the folder path")}
+          onCopy={(text, label) => copy(text, label)}
           onExport={() => {
             setSettingsModal(null);
             setShowExportModal(true);

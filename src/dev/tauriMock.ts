@@ -89,6 +89,25 @@ function catalogResult(sql: string): QueryResult | null {
   return null;
 }
 
+/** A few calls an agent made, so the Agent tab has something to show (cleared with its "Clear" button). */
+let agentLog = (() => {
+  const now = Date.now();
+  const at = (minutesAgo: number) => now - minutesAgo * 60_000;
+  const id = (t: number) => `${String(t).padStart(15, "0")}-mock`;
+  const entry = (minutesAgo: number, patch: Record<string, unknown>) => ({
+    id: id(at(minutesAgo)), at: at(minutesAgo), client: "claude-code", tool: "query", connection_id: "local", connection_name: "local",
+    sql: "", ms: 42, status: "ok", output: "", rows: null, truncated: false, ...patch,
+  });
+  return [
+    entry(0.2, { sql: "select status, count(*), sum(total)\nfrom orders\ngroup by 1\norder by 2 desc", rows: 5, ms: 18 }),
+    entry(0.6, { status: "blocked", sql: "delete from orders where status = 'cancelled'", output: "\"local\" is read-only for agents, so only reading statements (SELECT, WITH, SHOW, EXPLAIN, ...) are allowed. Start the MCP server with --allow-writes to allow writes on connections that are not read-only or prod." }),
+    entry(1, { status: "error", sql: "select totl from orders", output: "Error: ERROR: column \"totl\" does not exist\nHINT: Perhaps you meant to reference the column \"orders.total\".\nCode: 42703\nPosition: 8", ms: 6 }),
+    entry(1.4, { tool: "describe_table", sql: "\\d+ orders", output: "                 Table \"public.orders\"\n   Column    |  Type   | Nullable \n-------------+---------+----------\n id          | integer | not null \n customer_id | integer |          \n status      | text    |          \n total       | numeric |          \nIndexes:\n    \"orders_pkey\" PRIMARY KEY, btree (id)" }),
+    entry(1.5, { tool: "list_tables", sql: "\\dtvm+", output: "List of relations\n Schema |   Name    | Type  \n--------+-----------+-------\n public | customers | table\n public | orders    | table" }),
+    entry(1.6, { tool: "list_connections", connection_name: "", output: "[{ \"name\": \"local\", \"type\": \"postgres\", \"read_only\": true }]", ms: 1 }),
+  ];
+})();
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A few connections and saved queries so the UI is not empty (add ?empty to the URL for the first-run screen). */
@@ -232,8 +251,19 @@ export function installDevMock() {
         return null;
       case "restart_app":
         return null;
+      case "agent_log_list":
+        return agentLog;
+      case "agent_log_latest":
+        return agentLog[0]?.id ?? null;
+      case "agent_log_result":
+        return agentLog.find((e) => e.id === args.id)?.rows ? rowsResult(["status", "count", "sum"], [["paid", "412", "48210.50"], ["shipped", "380", "40211.00"], ["new", "97", "10022.10"], ["cancelled", "31", "2901.75"], ["refunded", "9", null]]) : null;
+      case "agent_log_clear":
+        agentLog = [];
+        return null;
       case "storage_dir":
         return "/Users/demo/Library/Application Support/com.svovoniks.sauron";
+      case "mcp_executable":
+        return "/Applications/sauron.app/Contents/MacOS/sauron";
       case "test_connection": {
         const connection = args.connection as { host: string };
         await sleep(400);

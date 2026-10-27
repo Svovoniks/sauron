@@ -45,8 +45,8 @@ export interface TabRun {
   meta: { text: string } | null;
   /** The run failed as a whole (could not connect, aborted, ...). */
   error: string | null;
-  /** Set when the run replayed a saved result (no database involved). */
-  savedResultName: string | null;
+  /** Set when the run replayed a result (no database involved): where it came from, shown above the table. */
+  resultSource: string | null;
   /** Timeout override this run used, if any. */
   timeoutSecs: number | null;
 }
