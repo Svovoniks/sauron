@@ -185,9 +185,6 @@ export function DataView({
   const columns = result?.columns ?? [];
   const rows = useMemo(() => result?.rows ?? [], [result]);
   const hasColumns = columns.length > 0;
-  const [pinnedIndex, setPinnedIndex] = useState<number | null>(null);
-  // A new result invalidates the pin.
-  useEffect(() => setPinnedIndex(null), [result]);
 
   const typedSearch = isSearchVisible ? searchQuery.trim().toLowerCase() : "";
   const searchTerm = useDeferredValue(typedSearch);
@@ -348,7 +345,7 @@ export function DataView({
                   const row = rows[rowIndex];
                   return (
                     <tr
-                      className={`record-row ${selectedIndex === rowIndex ? "active" : ""} ${pinnedIndex === rowIndex ? "pinned" : ""} ${item.index % 2 ? "odd" : ""}`}
+                      className={`record-row ${selectedIndex === rowIndex ? "active" : ""} ${item.index % 2 ? "odd" : ""}`}
                       data-index={item.index}
                       key={rowIndex}
                       onClick={() => actions.onSelectRow(rowIndex)}
@@ -511,9 +508,7 @@ export function DataView({
                 setSearchQuery(text);
                 setIsSearchVisible(true);
               }}
-              onPin={() => setPinnedIndex((current) => (current === selectedIndex ? null : selectedIndex))}
               onStep={actions.onStepRecord}
-              pinnedIndex={pinnedIndex}
               prefs={prefs}
               rows={rows}
               searchTerm={searchTerm}
