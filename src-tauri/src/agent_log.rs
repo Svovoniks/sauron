@@ -7,7 +7,7 @@
 //! The log follows the query history setting (off / 7 / 30 days / forever) and keeps at most `MAX_ENTRIES` calls.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -65,12 +65,10 @@ pub fn now_ms() -> u64 {
 /// Within a process the ms part only goes up (a call in the same ms as the last one takes the next ms), so calls
 /// made in quick succession keep their order instead of sorting by the random part.
 pub fn new_id() -> String {
-    static LAST_MS: AtomicU64 = AtomicU64::new(0);
-    let now = now_ms();
-    let previous = LAST_MS
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| Some(now.max(last + 1)))
-        .unwrap_or(0);
-    format!("{:015}-{}", now.max(previous + 1), &uuid::Uuid::new_v4().simple().to_string()[..8])
+    static LAST_MS: Mutex<u64> = Mutex::new(0);
+    let mut last = LAST_MS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *last = now_ms().max(*last + 1);
+    format!("{:015}-{}", *last, &uuid::Uuid::new_v4().simple().to_string()[..8])
 }
 
 /// Ids come from the webview: only what `new_id` produces, so they can never point outside the log folder.
