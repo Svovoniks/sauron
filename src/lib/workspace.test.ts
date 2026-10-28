@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Connection } from "../types/app";
 import { isDirty, neighbourAfterClose, newTab, nextUntitledName, normalizeSession, sortPinned } from "./workspace";
 
-const conn = (id: string): Connection => ({ id, name: id, host: "h", port: "5432", username: "", database: "", db_type: "postgres", ssl_mode: "require", read_only: true, timeout_secs: 0, env: "" });
+const conn = (id: string): Connection => ({ id, name: id, host: "h", port: "5432", username: "", database: "", db_type: "postgres", ssl_mode: "require", read_only: true, timeout_secs: 0, env: "", description: "" });
 
 describe("tabs", () => {
   test("untitled names do not collide", () => {

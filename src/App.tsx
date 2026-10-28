@@ -1009,11 +1009,6 @@ export default function App() {
   };
 
   // --- derived view state -------------------------------------------------------------------
-  const staleFrom =
-    activeRun && activeRun.connectionId && activeConnection && activeRun.connectionId !== activeConnection.id && activeRun.status === "done"
-      ? (data.connections.find((c) => c.id === activeRun.connectionId)?.name ?? activeRun.connectionName ?? "another connection")
-      : null;
-
   const prodBanner =
     settings.highlightProd && activeConnection?.env === "prod"
       ? { name: activeConnection.name || "Unnamed", host: activeConnection.host, readOnly: activeConnection.read_only }
@@ -1030,7 +1025,6 @@ export default function App() {
       setSelectedIndex(null);
     },
     onCancel: abort,
-    onRerunHere: () => rerunLast(),
     onDismissBanner: () => activeTab && setRestoredNotes((notes) => { const { [activeTab.id]: _gone, ...rest } = notes; return rest; }),
     onRunRestored: () => runNow("script"),
     onCopyLabelled: (text: string, label: string) => copy(text, label),
@@ -1213,7 +1207,6 @@ export default function App() {
               run={activeRun}
               schema={schemaState.schema}
               selectedIndex={selectedIndex}
-              staleFrom={staleFrom}
               tab={activeTab}
               tableName={tableName}
             />

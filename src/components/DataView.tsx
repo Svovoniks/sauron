@@ -28,7 +28,6 @@ export interface DataViewActions extends ErrorActions {
   onLoadMore: () => void;
   onSelectSet: (index: number) => void;
   onCancel: () => void;
-  onRerunHere: () => void;
   onDismissBanner: () => void;
   onRunRestored: () => void;
   onCopyLabelled: (text: string, label: string) => void;
@@ -40,8 +39,6 @@ interface DataViewProps {
   /** Connection the tab runs on. */
   connection: Connection | null;
   schema: Schema | null;
-  /** Results on screen came from another connection than the tab's current one. */
-  staleFrom: string | null;
   /** Shown after restoring a query from history. */
   restoredNote: string | null;
   selectedIndex: number | null;
@@ -160,7 +157,6 @@ export function DataView({
   run,
   connection,
   schema,
-  staleFrom,
   restoredNote,
   selectedIndex,
   recordsTableRef,
@@ -444,19 +440,6 @@ export function DataView({
               <button aria-selected={activeIndex === MESSAGES} className={`rset ${activeIndex === MESSAGES ? "active" : ""}`} onClick={() => actions.onSelectSet(MESSAGES)} role="tab" type="button">
                 <TerminalIcon size={12} />
                 Messages
-              </button>
-            </div>
-          ) : null}
-
-          {staleFrom && !isRunning && connection ? (
-            <div className="banner info">
-              <InfoIcon size={14} />
-              <span>
-                These results came from <b>{staleFrom}</b>, not the active connection.
-              </span>
-              <span className="sp" />
-              <button className="btn" onClick={actions.onRerunHere} type="button">
-                Run on {connection.name || "this connection"}
               </button>
             </div>
           ) : null}

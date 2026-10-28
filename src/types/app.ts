@@ -27,6 +27,8 @@ export interface Connection {
   /** Per-statement timeout in seconds, 0 = no timeout. */
   timeout_secs: number;
   env: Env;
+  /** Optional free-text note about the connection, shown to AI agents over MCP. */
+  description: string;
 }
 
 /** Connection being edited in the modal: `password === ""` on an existing connection means "unchanged". */
@@ -140,6 +142,7 @@ export const emptyDraft = (defaults: Partial<DraftDefaults> = {}): ConnectionDra
   read_only: defaults.readOnly ?? true,
   timeout_secs: defaults.timeoutSecs ?? 60,
   env: "",
+  description: "",
   password: "",
 });
 

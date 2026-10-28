@@ -291,6 +291,7 @@ export function SettingsModal(props: SettingsModalProps) {
   const sections = useMemo(() => settingsSections(props.version), [props.version]);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<SettingsSection>(props.initialSection ?? "general");
+  const [confirmReset, setConfirmReset] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const q = query.trim().toLowerCase();
 
@@ -590,10 +591,36 @@ export function SettingsModal(props: SettingsModalProps) {
         </div>
       </div>
       <div className="settings-foot">
-        <span>Changes apply immediately and are saved automatically.</span>
-        <button className="btn settings-button" onClick={props.onReset} type="button">
-          Reset all to defaults
-        </button>
+        {confirmReset ? (
+          <>
+            <span className="settings-foot-warn" role="alert">
+              <WarningIcon />
+              Reset every setting to its default? This cannot be undone.
+            </span>
+            <span className="settings-foot-actions">
+              <button className="btn settings-button" onClick={() => setConfirmReset(false)} type="button">
+                Cancel
+              </button>
+              <button
+                className="btn settings-button danger"
+                onClick={() => {
+                  setConfirmReset(false);
+                  props.onReset();
+                }}
+                type="button"
+              >
+                Reset everything
+              </button>
+            </span>
+          </>
+        ) : (
+          <>
+            <span>Changes apply immediately and are saved automatically.</span>
+            <button className="btn settings-button" onClick={() => setConfirmReset(true)} type="button">
+              Reset all to defaults
+            </button>
+          </>
+        )}
       </div>
     </Modal>
   );

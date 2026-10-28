@@ -72,6 +72,7 @@ export function normalizeConnection(raw: unknown): { connection: Connection; leg
     read_only: typeof raw.read_only === "boolean" ? raw.read_only : false,
     timeout_secs,
     env: typeof raw.env === "string" && (ENVS as readonly string[]).includes(raw.env) ? (raw.env as Env) : "",
+    description: str(raw.description).trim(),
   };
 
   const legacyPassword = typeof raw.password === "string" && raw.password !== "" ? raw.password : null;
