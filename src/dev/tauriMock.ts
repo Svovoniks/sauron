@@ -113,7 +113,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** A few connections and saved queries so the UI is not empty (add ?empty to the URL for the first-run screen). */
 function seed() {
   const conn = (id: string, name: string, host: string, env: string, read_only: boolean, db_type = "postgres") => ({
-    id, name, host, port: db_type === "postgres" ? "5432" : "8123", username: "dev", database: "shop_dev", db_type, ssl_mode: "require", read_only, timeout_secs: 60, env,
+    id, name, host, port: db_type === "postgres" ? "5432" : "8123", username: "dev", database: "shop_dev", db_type, ssl_mode: "require", read_only, timeout_secs: 60, env, description: "",
   });
   files.set(
     "connections",

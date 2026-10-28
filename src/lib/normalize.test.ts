@@ -24,6 +24,7 @@ const fullConn: Connection = {
   read_only: true,
   timeout_secs: 30,
   env: "",
+  description: "",
 };
 
 describe("normalizeConnection", () => {
@@ -611,6 +612,7 @@ describe("normalizeBackup", () => {
       read_only: false,
       timeout_secs: 0,
       env: "",
+      description: "",
     });
     expect(b.results.ch![0]!.rows).toEqual([[null, '{"c":1}']]);
   });

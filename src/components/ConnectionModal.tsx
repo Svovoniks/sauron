@@ -112,6 +112,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
       read_only: draft.read_only,
       timeout_secs: draft.timeout_secs,
       env: draft.env,
+      description: draft.description,
     };
     try {
       const report = await testConnection(connection, draft.password);
@@ -175,6 +176,19 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
             ))}
           </div>
           <p className="field-hint">Production connections get a red marker and ask for confirmation before writes.</p>
+        </div>
+        <div className="form-group">
+          <label htmlFor="connection-description">
+            Description <span className="optional">(optional)</span>
+          </label>
+          <textarea
+            id="connection-description"
+            onChange={(event) => patch({ description: event.target.value })}
+            placeholder="e.g. Staging replica of the orders service. Safe to query, data is refreshed nightly."
+            rows={3}
+            value={draft.description}
+          />
+          <p className="field-hint">Shown to AI agents that list your connections over MCP, so they know which one to use.</p>
         </div>
         <div className="host-port-group">
           <div className="form-group">

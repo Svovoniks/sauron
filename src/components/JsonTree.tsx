@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 const mark = (text: string, term: string): ReactNode => {
   if (!term) return text;
@@ -19,25 +19,15 @@ const mark = (text: string, term: string): ReactNode => {
   return out;
 };
 
-/** Does any key or scalar below `value` contain `term` (lower-case)? Used to open folded branches that hold a match. */
-const contains = (value: unknown, term: string): boolean => {
-  if (value === null) return "null".includes(term);
-  if (typeof value !== "object") return String(value).toLowerCase().includes(term);
-  const entries: [string, unknown][] = Array.isArray(value) ? [] : Object.entries(value as Record<string, unknown>);
-  if (Array.isArray(value)) return value.some((item) => contains(item, term));
-  return entries.some(([key, inner]) => key.toLowerCase().includes(term) || contains(inner, term));
-};
-
 interface JsonTreeProps {
   value: unknown;
-  depth?: number;
   name?: string | number;
   /** Lower-case search text to highlight in keys and values. */
   term?: string;
 }
 
-/** Collapsible JSON: objects and arrays fold, scalars are coloured by type, matches of the search are marked. */
-export function JsonTree({ value, depth = 0, name, term = "" }: JsonTreeProps): ReactNode {
+/** Collapsible JSON, fully expanded to start with: objects and arrays fold, scalars are coloured by type, matches of the search are marked. */
+export function JsonTree({ value, name, term = "" }: JsonTreeProps): ReactNode {
   const key = name !== undefined ? <span className="jk">{mark(String(name), term)}</span> : null;
   const sep = name !== undefined ? ": " : "";
   if (value === null) {
@@ -71,7 +61,7 @@ export function JsonTree({ value, depth = 0, name, term = "" }: JsonTreeProps): 
     );
   }
   return (
-    <details open={depth < 3 || (term !== "" && contains(value, term))}>
+    <details open>
       <summary>
         {key}
         {sep}
@@ -82,7 +72,7 @@ export function JsonTree({ value, depth = 0, name, term = "" }: JsonTreeProps): 
         </span>
       </summary>
       {entries.map(([k, v]) => (
-        <JsonTree depth={depth + 1} key={k} name={isArray ? undefined : k} term={term} value={v} />
+        <JsonTree key={k} name={isArray ? undefined : k} term={term} value={v} />
       ))}
       <div className="jt-close">{isArray ? "]" : "}"}</div>
     </details>
@@ -92,8 +82,18 @@ export function JsonTree({ value, depth = 0, name, term = "" }: JsonTreeProps): 
 /** `JsonTree` in its `.jt` frame, with a button that folds every nested branch or unfolds them all. */
 export function JsonView({ value, term = "" }: { value: unknown; term?: string }): ReactNode {
   const root = useRef<HTMLDivElement>(null);
-  const [folded, setFolded] = useState(false);
-  const nested = typeof value === "object" && value !== null && Object.keys(value).length > 0;
+  const [anyFolded, setAnyFolded] = useState(false);
+  const nested = typeof value === "object" && value !== null && Object.values(value).some((v) => typeof v === "object" && v !== null && Object.keys(v).length > 0);
+
+  // The label follows the real state of the tree, which the user can also change by clicking the carets.
+  // The toggle event does not bubble, so it is caught in the capture phase.
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const sync = () => setAnyFolded(Array.from(el.querySelectorAll("details")).some((d) => !d.open));
+    el.addEventListener("toggle", sync, true);
+    return () => el.removeEventListener("toggle", sync, true);
+  }, []);
 
   const toggle = () => {
     const all = Array.from(root.current?.querySelectorAll("details") ?? []);
@@ -102,14 +102,13 @@ export function JsonView({ value, term = "" }: { value: unknown; term?: string }
     all.forEach((d, i) => {
       d.open = open || i === 0;
     });
-    setFolded(!open);
   };
 
   return (
     <div className="jt" ref={root}>
       {nested ? (
         <button className="jt-toggle" onClick={toggle} type="button">
-          {folded ? "Expand all" : "Collapse all"}
+          {anyFolded ? "Expand all" : "Collapse all"}
         </button>
       ) : null}
       <JsonTree term={term} value={value} />

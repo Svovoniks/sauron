@@ -151,7 +151,8 @@
   min-width: 0;
 }
 
-.modal input {
+.modal input,
+.modal textarea {
   padding: 14px 18px;
   border-radius: calc(10px * var(--rs));
   border: 1px solid var(--edge);
@@ -161,7 +162,19 @@
   transition: all 0.3s ease;
 }
 
-.modal input:focus {
+.modal textarea {
+  font-family: inherit;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.form-group label .optional {
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.modal input:focus,
+.modal textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.15);

@@ -43,6 +43,8 @@ struct Saved {
     name: String,
     #[serde(default)]
     env: String,
+    #[serde(default)]
+    description: String,
 }
 
 impl Saved {
@@ -305,7 +307,7 @@ impl Server {
             .await?
             .iter()
             .map(|c| {
-                json!({
+                let mut entry = json!({
                     "name": c.label(),
                     "id": c.params.id,
                     "type": match c.params.db_type { DbType::Postgres => "postgres", DbType::Clickhouse => "clickhouse" },
@@ -315,7 +317,11 @@ impl Server {
                     "username": c.params.username,
                     "environment": c.env,
                     "read_only": !c.writable(self.allow_writes),
-                })
+                });
+                if !c.description.trim().is_empty() {
+                    entry["description"] = json!(c.description.trim());
+                }
+                entry
             })
             .collect();
         if list.is_empty() {
