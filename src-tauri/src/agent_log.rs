@@ -7,6 +7,7 @@
 //! The log follows the query history setting (off / 7 / 30 days / forever) and keeps at most `MAX_ENTRIES` calls.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -60,9 +61,16 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Sortable by time: zero padded ms, then a random part so two calls in the same ms do not collide.
+/// Sortable by time: zero padded ms, then a random part so two processes writing in the same ms do not collide.
+/// Within a process the ms part only goes up (a call in the same ms as the last one takes the next ms), so calls
+/// made in quick succession keep their order instead of sorting by the random part.
 pub fn new_id() -> String {
-    format!("{:015}-{}", now_ms(), &uuid::Uuid::new_v4().simple().to_string()[..8])
+    static LAST_MS: AtomicU64 = AtomicU64::new(0);
+    let now = now_ms();
+    let previous = LAST_MS
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| Some(now.max(last + 1)))
+        .unwrap_or(0);
+    format!("{:015}-{}", now.max(previous + 1), &uuid::Uuid::new_v4().simple().to_string()[..8])
 }
 
 /// Ids come from the webview: only what `new_id` produces, so they can never point outside the log folder.
@@ -217,10 +225,16 @@ mod tests {
     }
 
     #[test]
+    fn ids_made_in_quick_succession_keep_their_order() {
+        let ids: Vec<String> = (0..200).map(|_| new_id()).collect();
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]), "{ids:?}");
+    }
+
+    #[test]
     fn records_lists_newest_first_and_reads_results() {
         let data = temp_dir();
         let table = Table { columns: vec![serde_json::json!({ "name": "a", "type": "number" })], rows: vec![vec![Some("1".into())], vec![None]], truncated: true, message: None };
-        let (first, second) = (new_id(), format!("{:015}-zzzzzzzz", now_ms() + 1));
+        let (first, second) = (new_id(), new_id());
         record(&data, entry(&first), Some(table.clone())).unwrap();
         record(&data, entry(&second), None).unwrap();
 
