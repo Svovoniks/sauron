@@ -177,14 +177,13 @@ struct ProcessGroup(Option<u32>);
 
 impl Drop for ProcessGroup {
     fn drop(&mut self) {
+        // A direct killpg: the kill binary from procps-ng skips the group when its leader (the killed shell) is a zombie.
         #[cfg(unix)]
-        if let Some(pid) = self.0 {
-            let _ = std::process::Command::new("kill")
-                .arg("-TERM")
-                .arg(format!("-{pid}"))
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+        if let Some(pgid) = self.0.and_then(|pid| libc::pid_t::try_from(pid).ok()) {
+            // SAFETY: killpg only sends a signal; an already empty group just makes it fail with ESRCH.
+            unsafe {
+                libc::killpg(pgid, libc::SIGTERM);
+            }
         }
     }
 }
@@ -646,9 +645,20 @@ mod tests {
         assert!(cancelled.is_err(), "the command should still have been running");
         let pid = std::fs::read_to_string(&pid_file).unwrap();
         let _ = std::fs::remove_file(&pid_file);
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        let alive = std::process::Command::new("kill").arg("-0").arg(pid.trim()).status().unwrap().success();
-        assert!(!alive, "the background sleep {} outlived the cancelled renewal", pid.trim());
+        // A killed process whose parent shell is gone stays a zombie until something reaps it (on Linux that can
+        // take a while, macOS is quick), so a zombie counts as stopped too.
+        let running = || {
+            let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", pid.trim()]).output().unwrap();
+            let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            !state.is_empty() && !state.starts_with('Z')
+        };
+        for _ in 0..20 {
+            if !running() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(!running(), "the background sleep {} outlived the cancelled renewal", pid.trim());
     }
 
     #[test]

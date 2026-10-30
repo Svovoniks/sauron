@@ -3640,12 +3640,13 @@ dependencies = [
 
 [[package]]
 name = "sauron"
-version = "0.4.12"
+version = "0.4.13"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "dirs",
  "keyring",
+ "libc",
  "native-tls",
  "p12",
  "postgres-native-tls",
