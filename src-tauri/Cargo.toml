@@ -1,6 +1,6 @@
 [package]
 name = "sauron"
-version = "0.4.12"
+version = "0.4.13"
 description = "database query app"
 authors = ["svovoniks"]
 edition = "2021"
@@ -43,3 +43,7 @@ sha2 = "0.10"
 # client certificates go to native-tls as a PKCS#12 bundle on macOS and Windows (see src/client_cert.rs)
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 p12 = "0.6"
+
+# stopping a renewal command's whole process group (see src/client_cert.rs)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
