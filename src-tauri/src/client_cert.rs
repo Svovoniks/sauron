@@ -1,10 +1,13 @@
 //! Certificate files of a Postgres connection, the same ones libpq takes as sslrootcert, sslcert and sslkey.
 //! They are read on every connect, so a re-issued certificate (keex hands out week-long ones) is picked up
 //! by overwriting the files, without editing the connection. A connection can also use the default files
-//! from Settings (settings.json), so one keex certificate serves every STG database.
+//! from Settings (settings.json), so one keex certificate serves every STG database. When the client
+//! certificate has expired, the renewal command from Settings (if any) is run before connecting.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::process::Stdio;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -13,6 +16,10 @@ use native_tls::{Certificate, Identity, TlsConnectorBuilder};
 use crate::model::ConnectionParams;
 
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+/// One renewal at a time: connections that notice the expiry together wait for it instead of starting their own.
+static RENEWING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Long enough for a browser single sign-on.
+const RENEW_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Where settings.json lives (the app data directory), for the default certificates.
 pub fn init(data_dir: PathBuf) {
@@ -36,23 +43,149 @@ pub fn files(conn: &ConnectionParams) -> Result<Files, String> {
             key: conn.ssl_key.trim().to_string(),
         });
     }
-    let defaults = DATA_DIR.get().map(|dir| defaults_in(dir)).unwrap_or_default();
+    let defaults = DATA_DIR.get().map(|dir| defaults_in(&settings_in(dir))).unwrap_or_default();
     if defaults == Files::default() {
         return Err("This connection uses the default certificates, but none are set in Settings > Connections".to_string());
     }
     Ok(defaults)
 }
 
-fn defaults_in(data_dir: &Path) -> Files {
-    let settings = std::fs::read_to_string(data_dir.join("settings.json"))
+fn settings_in(data_dir: &Path) -> serde_json::Value {
+    std::fs::read_to_string(data_dir.join("settings.json"))
         .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .unwrap_or_default();
-    let path = |key: &str| settings.get(key).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn text_setting(settings: &serde_json::Value, key: &str) -> String {
+    settings.get(key).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string()
+}
+
+fn defaults_in(settings: &serde_json::Value) -> Files {
     Files {
-        root: path("defaultSslRootCert"),
-        cert: path("defaultSslCert"),
-        key: path("defaultSslKey"),
+        root: text_setting(settings, "defaultSslRootCert"),
+        cert: text_setting(settings, "defaultSslCert"),
+        key: text_setting(settings, "defaultSslKey"),
+    }
+}
+
+/// When the connection's client certificate has expired and Settings has a renewal command, run it and check
+/// again. Without a command (or with an unreadable certificate) this does nothing and the connect itself reports it.
+pub async fn renew_if_expired(conn: &ConnectionParams) -> Result<(), String> {
+    let Ok(files) = files(conn) else { return Ok(()) };
+    if files.cert.is_empty() || !is_expired(&files) {
+        return Ok(());
+    }
+    let command = DATA_DIR
+        .get()
+        .map(|dir| text_setting(&settings_in(dir), "certRenewCommand"))
+        .unwrap_or_default();
+    if command.is_empty() {
+        return Ok(());
+    }
+    let _renewing = RENEWING.lock().await;
+    // another connection may have renewed it while this one waited
+    if !is_expired(&files) {
+        return Ok(());
+    }
+    run_renewal(&command, &files).await?;
+    if is_expired(&files) {
+        return Err(format!(
+            "The certificate renewal command finished, but the client certificate {} is still expired",
+            expand(&files.cert).display()
+        ));
+    }
+    Ok(())
+}
+
+/// "Renew now" in Settings: runs the renewal command whether or not the certificate has expired, with the
+/// command and default files as they are on screen (settings.json is written with a delay). Returns how long
+/// the client certificate is valid now, when one is set.
+pub async fn renew_now(command: &str, files: &Files) -> Result<Option<String>, String> {
+    let command = command.trim();
+    if command.is_empty() {
+        return Err("Set a certificate renewal command first".to_string());
+    }
+    let _renewing = RENEWING.lock().await;
+    run_renewal(command, files).await?;
+    if files.cert.is_empty() {
+        return Ok(None);
+    }
+    let (_, not_after) = validity(&read("client certificate", &files.cert)?)?;
+    if now() >= not_after.secs {
+        return Err(format!(
+            "The certificate renewal command finished, but the client certificate {} is still expired",
+            expand(&files.cert).display()
+        ));
+    }
+    Ok(Some(not_after.text))
+}
+
+fn is_expired(files: &Files) -> bool {
+    read("client certificate", &files.cert)
+        .and_then(|cert| validity(&cert))
+        .is_ok_and(|(_, not_after)| now() >= not_after.secs)
+}
+
+/// Runs the command in the user's login shell (an app started from the Finder has a bare PATH, without Homebrew),
+/// with the certificate paths in SAURON_SSL_ROOT_CERT, SAURON_SSL_CERT and SAURON_SSL_KEY.
+async fn run_renewal(command: &str, files: &Files) -> Result<(), String> {
+    #[cfg(unix)]
+    let mut cmd = {
+        let shell = std::env::var("SHELL").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "/bin/sh".to_string());
+        let mut cmd = tokio::process::Command::new(shell);
+        cmd.arg("-l").arg("-c").arg(command).process_group(0);
+        cmd
+    };
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut cmd = tokio::process::Command::new("cmd");
+        cmd.arg("/C").arg(command);
+        cmd
+    };
+    for (var, path) in [("SAURON_SSL_ROOT_CERT", &files.root), ("SAURON_SSL_CERT", &files.cert), ("SAURON_SSL_KEY", &files.key)] {
+        cmd.env(var, if path.is_empty() { PathBuf::new() } else { expand(path) });
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Could not start the certificate renewal command: {e}"))?;
+    // Timing out or cancelling the query drops the wait; the guard then stops everything the command started.
+    let _group = ProcessGroup(child.id());
+    let output = match tokio::time::timeout(RENEW_TIMEOUT, child.wait_with_output()).await {
+        Err(_) => return Err(format!("The certificate renewal command did not finish within {} minutes", RENEW_TIMEOUT.as_secs() / 60)),
+        Ok(Err(e)) => return Err(format!("Could not run the certificate renewal command: {e}")),
+        Ok(Ok(output)) => output,
+    };
+    if output.status.success() {
+        return Ok(());
+    }
+    let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let text = text.trim();
+    let tail: String = text.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
+    Err(format!(
+        "The certificate renewal command failed ({}){}",
+        output.status,
+        if tail.is_empty() { String::new() } else { format!(": {tail}") }
+    ))
+}
+
+/// Terminates the renewal command's whole process group when dropped (a no-op once it has exited), so a helper
+/// it started, like a listener waiting for the login callback, does not outlive it.
+#[cfg_attr(windows, allow(dead_code))]
+struct ProcessGroup(Option<u32>);
+
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.0 {
+            let _ = std::process::Command::new("kill")
+                .arg("-TERM")
+                .arg(format!("-{pid}"))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
     }
 }
 
@@ -68,6 +201,7 @@ pub fn configure(builder: &mut TlsConnectorBuilder, conn: &ConnectionParams) -> 
         (true, true) => {}
         (false, false) => {
             let cert = read("client certificate", &files.cert)?;
+            check_dates(&cert, &files.cert, now())?;
             let key = pkcs8_der(&read("client key", &files.key)?)?;
             builder.identity(identity(&cert, &key)?);
         }
@@ -75,6 +209,119 @@ pub fn configure(builder: &mut TlsConnectorBuilder, conn: &ConnectionParams) -> 
         (false, true) => return Err("A client certificate is set but no client key".to_string()),
     }
     Ok(())
+}
+
+/// Fails with a clear message when the client certificate has expired (or is not valid yet), before connecting:
+/// the server would only answer with an opaque TLS alert. psql uses it too.
+pub fn check_expiry(files: &Files) -> Result<(), String> {
+    if files.cert.is_empty() {
+        return Ok(());
+    }
+    check_dates(&read("client certificate", &files.cert)?, &files.cert, now())
+}
+
+/// When the connection's client certificate stops being valid, for Test connection ("2026-11-06 08:49 UTC").
+pub fn expiry(conn: &ConnectionParams) -> Option<String> {
+    let files = files(conn).ok()?;
+    if files.cert.is_empty() {
+        return None;
+    }
+    let (_, not_after) = validity(&read("client certificate", &files.cert).ok()?).ok()?;
+    Some(not_after.text)
+}
+
+fn now() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+fn check_dates(cert: &[u8], path: &str, now: i64) -> Result<(), String> {
+    let (not_before, not_after) = validity(cert)?;
+    let shown = expand(path).display().to_string();
+    if now >= not_after.secs {
+        return Err(format!(
+            "The client certificate expired on {} ({shown}). Issue a new one and overwrite the file.",
+            not_after.text
+        ));
+    }
+    if now < not_before.secs {
+        return Err(format!(
+            "The client certificate is not valid until {} ({shown}). Check this computer's clock.",
+            not_before.text
+        ));
+    }
+    Ok(())
+}
+
+/// A certificate date as seconds since 1970 and as text.
+#[derive(Debug, PartialEq)]
+struct Moment {
+    secs: i64,
+    text: String,
+}
+
+/// notBefore and notAfter of the first (leaf) certificate of a PEM or DER file.
+fn validity(cert: &[u8]) -> Result<(Moment, Moment), String> {
+    let der = match std::str::from_utf8(cert) {
+        Ok(text) if text.contains("-----BEGIN ") => {
+            let (_, body) = pem_blocks(text, "client certificate")?
+                .into_iter()
+                .find(|(label, _)| label == "CERTIFICATE")
+                .ok_or("The client certificate file has no certificates in it")?;
+            decode(&body, "client certificate")?
+        }
+        _ => cert.to_vec(),
+    };
+    let bad = || "Malformed client certificate".to_string();
+    // Certificate is SEQUENCE { tbsCertificate, ... }; tbsCertificate is SEQUENCE { [0] version (optional),
+    // serialNumber, signature, issuer, validity, ... }; validity is SEQUENCE { notBefore, notAfter }.
+    let (_, certificate, _) = tlv(&der)?;
+    let (_, mut tbs, _) = tlv(certificate)?;
+    if tbs.first() == Some(&0xa0) {
+        tbs = tlv(tbs)?.2;
+    }
+    for _ in 0..3 {
+        tbs = tlv(tbs)?.2;
+    }
+    let (tag, dates, _) = tlv(tbs)?;
+    if tag != SEQUENCE {
+        return Err(bad());
+    }
+    let (tag_before, before, rest) = tlv(dates)?;
+    let (tag_after, after, _) = tlv(rest)?;
+    Ok((time(tag_before, before).ok_or_else(bad)?, time(tag_after, after).ok_or_else(bad)?))
+}
+
+/// UTCTime (YYMMDDHHMMSSZ) or GeneralizedTime (YYYYMMDDHHMMSSZ), the only forms RFC 5280 allows.
+fn time(tag: u8, value: &[u8]) -> Option<Moment> {
+    let text = std::str::from_utf8(value).ok()?.strip_suffix('Z')?;
+    let (year, rest) = match (tag, text.len()) {
+        (0x17, 12) => {
+            let yy: i64 = text[..2].parse().ok()?;
+            (if yy >= 50 { 1900 + yy } else { 2000 + yy }, &text[2..])
+        }
+        (0x18, 14) => (text[..4].parse().ok()?, &text[4..]),
+        _ => return None,
+    };
+    let field = |at: usize| rest.get(at..at + 2)?.parse::<i64>().ok();
+    let (month, day, hour, minute, second) = (field(0)?, field(2)?, field(4)?, field(6)?, field(8)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    Some(Moment {
+        secs: days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second,
+        text: format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02} UTC"),
+    })
+}
+
+/// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// Neither Security.framework (macOS) nor schannel (Windows) imports a bare PKCS#8 EC key, the kind keex
@@ -310,18 +557,98 @@ mod tests {
     fn default_files_come_from_settings() {
         let dir = std::env::temp_dir().join(format!("sauron-cert-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(defaults_in(&dir), Files::default());
+        assert_eq!(defaults_in(&settings_in(&dir)), Files::default());
         std::fs::write(
             dir.join("settings.json"),
             r#"{"defaultSslRootCert":" ~/c/root.pem ","defaultSslCert":"/c/cert.pem","defaultSslKey":"/c/key.pem","rowLimit":5}"#,
         )
         .unwrap();
-        let files = defaults_in(&dir);
+        let files = defaults_in(&settings_in(&dir));
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(
             files,
             Files { root: "~/c/root.pem".into(), cert: "/c/cert.pem".into(), key: "/c/key.pem".into() }
         );
+    }
+
+    /// Just the parts of a certificate the date check reads: version, serial, algorithm, issuer, validity.
+    fn certificate_pem(not_before: (u8, &str), not_after: (u8, &str)) -> String {
+        let mut tbs = encode(0xa0, &[0x02, 0x01, 0x02]);
+        tbs.extend([0x02, 0x01, 0x01]);
+        tbs.extend(encode(SEQUENCE, &EC_PUBLIC_KEY));
+        tbs.extend(encode(SEQUENCE, &[]));
+        let mut dates = encode(not_before.0, not_before.1.as_bytes());
+        dates.extend(encode(not_after.0, not_after.1.as_bytes()));
+        tbs.extend(encode(SEQUENCE, &dates));
+        pem("CERTIFICATE", &encode(SEQUENCE, &encode(SEQUENCE, &tbs)))
+    }
+
+    #[test]
+    fn validity_dates_are_read_in_both_time_formats() {
+        let cert = certificate_pem((0x17, "261030084811Z"), (0x18, "20261106084911Z"));
+        let (before, after) = validity(cert.as_bytes()).unwrap();
+        assert_eq!(before, Moment { secs: 1_793_350_091, text: "2026-10-30 08:48 UTC".into() });
+        assert_eq!(after, Moment { secs: 1_793_954_951, text: "2026-11-06 08:49 UTC".into() });
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2000, 3, 1), 11_017);
+    }
+
+    #[test]
+    fn expired_and_not_yet_valid_certificates_are_refused() {
+        let cert = certificate_pem((0x17, "261030084811Z"), (0x17, "261106084911Z"));
+        assert!(check_dates(cert.as_bytes(), "/c/cert.pem", 1_793_500_000).is_ok());
+        let expired = check_dates(cert.as_bytes(), "/c/cert.pem", 1_793_954_951).unwrap_err();
+        assert!(expired.contains("expired on 2026-11-06 08:49 UTC") && expired.contains("/c/cert.pem"), "{expired}");
+        let early = check_dates(cert.as_bytes(), "/c/cert.pem", 1_793_350_000).unwrap_err();
+        assert!(early.contains("not valid until 2026-10-30 08:48 UTC"), "{early}");
+        assert!(validity(b"-----BEGIN CERTIFICATE-----\nMAA=\n-----END CERTIFICATE-----\n").is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn renewal_command_gets_the_paths_and_reports_failures() {
+        let dir = std::env::temp_dir().join(format!("sauron-renew-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("seen.txt");
+        let files = Files { root: "/c/root.pem".into(), cert: "/c/cert.pem".into(), key: String::new() };
+        let ok = format!("printf '%s|%s|%s' \"$SAURON_SSL_ROOT_CERT\" \"$SAURON_SSL_CERT\" \"$SAURON_SSL_KEY\" > '{}'", out.display());
+        run_renewal(&ok, &files).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "/c/root.pem|/c/cert.pem|");
+        let err = run_renewal("echo login needed >&2; exit 3", &files).await.unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(err.contains("failed") && err.contains("login needed"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn renew_now_reports_the_new_expiry() {
+        let dir = std::env::temp_dir().join(format!("sauron-renew-now-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (fresh, stale, cert) = (dir.join("fresh.pem"), dir.join("stale.pem"), dir.join("cert.pem"));
+        std::fs::write(&fresh, certificate_pem((0x17, "250101000000Z"), (0x18, "29991231235900Z"))).unwrap();
+        std::fs::write(&stale, certificate_pem((0x17, "250101000000Z"), (0x17, "250108000000Z"))).unwrap();
+        let files = Files { cert: cert.display().to_string(), ..Files::default() };
+        let copy = |from: &Path| format!("cp '{}' \"$SAURON_SSL_CERT\"", from.display());
+        assert_eq!(renew_now(&copy(&fresh), &files).await.unwrap().as_deref(), Some("2999-12-31 23:59 UTC"));
+        let still = renew_now(&copy(&stale), &files).await.unwrap_err();
+        assert!(still.contains("still expired"), "{still}");
+        assert!(renew_now("  ", &files).await.unwrap_err().contains("renewal command first"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_a_renewal_stops_what_it_started() {
+        let pid_file = std::env::temp_dir().join(format!("sauron-renew-pid-{}", uuid::Uuid::new_v4()));
+        let command = format!("sleep 60 & echo $! > '{}'; wait", pid_file.display());
+        let files = Files::default();
+        let cancelled = tokio::time::timeout(Duration::from_millis(500), run_renewal(&command, &files)).await;
+        assert!(cancelled.is_err(), "the command should still have been running");
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let _ = std::fs::remove_file(&pid_file);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let alive = std::process::Command::new("kill").arg("-0").arg(pid.trim()).status().unwrap().success();
+        assert!(!alive, "the background sleep {} outlived the cancelled renewal", pid.trim());
     }
 
     #[test]

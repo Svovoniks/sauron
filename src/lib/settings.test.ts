@@ -22,8 +22,9 @@ describe("normalizeSettings", () => {
     expect(s.execScope).toBe("statement");
   });
   test("default certificate paths are trimmed strings", () => {
-    const s = normalizeSettings({ defaultSslRootCert: " ~/c/root.pem ", defaultSslCert: "/c/cert.pem", defaultSslKey: 42 });
+    const s = normalizeSettings({ defaultSslRootCert: " ~/c/root.pem ", defaultSslCert: "/c/cert.pem", defaultSslKey: 42, certRenewCommand: " ~/bin/renew.sh --out ~/certs " });
     expect([s.defaultSslRootCert, s.defaultSslCert, s.defaultSslKey]).toEqual(["~/c/root.pem", "/c/cert.pem", ""]);
+    expect(s.certRenewCommand).toBe("~/bin/renew.sh --out ~/certs");
   });
   test("row limit must be a positive integer within the backend maximum", () => {
     expect(normalizeSettings({ rowLimit: 0 }).rowLimit).toBe(DEFAULT_SETTINGS.rowLimit);

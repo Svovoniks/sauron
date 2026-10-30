@@ -94,7 +94,9 @@ async fn run_with_binary(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
+    client_cert::renew_if_expired(conn).await.map_err(PsqlError::Failed)?;
     let files = client_cert::files(conn).map_err(PsqlError::Failed)?;
+    client_cert::check_expiry(&files).map_err(PsqlError::Failed)?;
     for (var, path) in [
         ("PGSSLROOTCERT", &files.root),
         ("PGSSLCERT", &files.cert),

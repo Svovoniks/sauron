@@ -10,6 +10,7 @@ import {
   type Settings,
   type ShortcutId,
 } from "../lib/settings";
+import { renewCertificates } from "../lib/db/query";
 import { hasAppearance, paletteOf, THEMES, themeById, type Appearance } from "../lib/themes";
 import { Modal } from "./Modal";
 import { CloseIcon, SearchIcon, WarningIcon } from "./icons";
@@ -29,7 +30,7 @@ type Control =
   | { type: "select"; key: keyof Settings; options: Option[]; numeric?: boolean; suffix?: string }
   | { type: "text"; key: keyof Settings; placeholder?: string; wide?: boolean }
   | { type: "keys"; id: ShortcutId }
-  | { type: "button"; text: string; action: "export" | "import" | "clearHistory" | "copyFolder" | "checkUpdate" | "copyMcpClaude" | "copyMcpCodex" | "copyMcpJson"; danger?: boolean }
+  | { type: "button"; text: string; action: "export" | "import" | "clearHistory" | "copyFolder" | "checkUpdate" | "renewCerts" | "copyMcpClaude" | "copyMcpCodex" | "copyMcpJson"; danger?: boolean }
   | { type: "value"; text: string };
 
 export interface Row {
@@ -151,6 +152,13 @@ export const settingsSections = (version: string): Section[] => [
         control: { type: "text", key: "defaultSslCert", placeholder: "~/certs/certificate.pem", wide: true },
       },
       { id: "defaultSslKey", label: "Default client key", desc: "The private key that belongs to the client certificate.", control: { type: "text", key: "defaultSslKey", placeholder: "~/certs/private.pem", wide: true } },
+      {
+        id: "certRenewCommand",
+        label: "Certificate renewal command",
+        desc: "Runs in your login shell when connecting finds the client certificate expired, then the connection is retried. Gets the paths in SAURON_SSL_CERT, SAURON_SSL_KEY and SAURON_SSL_ROOT_CERT; may take up to 5 minutes.",
+        control: { type: "text", key: "certRenewCommand", placeholder: "~/bin/renew-certs.sh", wide: true },
+      },
+      { id: "renewCerts", label: "Renew certificates now", desc: "Runs the renewal command above with the default certificate files, even if they have not expired.", control: { type: "button", text: "Renew now", action: "renewCerts" } },
       { id: "highlightProd", label: "Highlight production connections", desc: "Red marker on the tab and a banner above the editor.", control: { type: "switch", key: "highlightProd" } },
       { id: "confirmProdWrites", label: "Confirm writes on production", desc: "Ask you to type the connection name before INSERT, UPDATE, DELETE or DDL runs on a production connection.", control: { type: "switch", key: "confirmProdWrites" } },
     ],
@@ -305,6 +313,7 @@ export function SettingsModal(props: SettingsModalProps) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<SettingsSection>(props.initialSection ?? "general");
   const [confirmReset, setConfirmReset] = useState(false);
+  const [renew, setRenew] = useState<{ running: boolean; status: string }>({ running: false, status: "" });
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const q = query.trim().toLowerCase();
 
@@ -510,12 +519,17 @@ export function SettingsModal(props: SettingsModalProps) {
         return (
           <button
             className={`btn settings-button ${c.danger ? "danger" : ""}`}
-            disabled={(c.action === "checkUpdate" && props.checkingUpdate) || (c.action.startsWith("copyMcp") && !props.mcpExecutable)}
+            disabled={
+              (c.action === "checkUpdate" && props.checkingUpdate) ||
+              (c.action === "renewCerts" && (renew.running || !props.settings.certRenewCommand.trim())) ||
+              (c.action.startsWith("copyMcp") && !props.mcpExecutable)
+            }
             onClick={() => {
               if (c.action === "export") props.onExport();
               else if (c.action === "import") props.onImport();
               else if (c.action === "clearHistory") props.onClearHistory();
               else if (c.action === "checkUpdate") props.onCheckUpdate();
+              else if (c.action === "renewCerts") void renewNow();
               else if (c.action === "copyMcpClaude" && props.mcpExecutable) props.onCopy(mcpSetup(props.mcpExecutable).claude, "the Claude Code command");
               else if (c.action === "copyMcpCodex" && props.mcpExecutable) props.onCopy(mcpSetup(props.mcpExecutable).codex, "the Codex command");
               else if (c.action === "copyMcpJson" && props.mcpExecutable) props.onCopy(mcpSetup(props.mcpExecutable).json, "the MCP config");
@@ -523,11 +537,21 @@ export function SettingsModal(props: SettingsModalProps) {
             }}
             type="button"
           >
-            {c.text}
+            {c.action === "renewCerts" && renew.running ? "Renewing…" : c.text}
           </button>
         );
       case "value":
         return <span className="settings-value">{c.text}</span>;
+    }
+  };
+
+  const renewNow = async () => {
+    setRenew({ running: true, status: "Running the renewal command… (finish the login in your browser if it opens one)" });
+    try {
+      const until = await renewCertificates(settings.certRenewCommand, { root: settings.defaultSslRootCert, cert: settings.defaultSslCert, key: settings.defaultSslKey });
+      setRenew({ running: false, status: until ? `Renewed. The default client certificate is valid until ${until}.` : "The renewal command finished." });
+    } catch (error) {
+      setRenew({ running: false, status: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -536,6 +560,10 @@ export function SettingsModal(props: SettingsModalProps) {
     if (row.id === "mcpClaude" && props.mcpExecutable) return mcpSetup(props.mcpExecutable).claude;
     if (row.id === "mcpCodex" && props.mcpExecutable) return mcpSetup(props.mcpExecutable).codex;
     if (row.id === "version" && props.updateStatus) return `${row.desc} · ${props.updateStatus}`;
+    if (row.id === "renewCerts") {
+      if (!props.settings.certRenewCommand.trim()) return "Set a renewal command above first.";
+      if (renew.status) return renew.status;
+    }
     if (row.id === "clearHistory") return `${props.historyCount.toLocaleString("en-US")} entr${props.historyCount === 1 ? "y" : "ies"}.`;
     return row.desc;
   };

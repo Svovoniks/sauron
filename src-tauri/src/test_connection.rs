@@ -102,10 +102,10 @@ async fn test_postgres(conn: &ConnectionParams, password: &str, guard: &Guard<'_
         SslMode::VerifyCa => "TLS, certificate authority verified",
         SslMode::Verify => "TLS, certificate verified",
     };
-    let detail = match crate::client_cert::files(conn) {
-        Ok(files) if !files.cert.is_empty() && conn.use_default_certs => format!("{tls}, default client certificate"),
-        Ok(files) if !files.cert.is_empty() => format!("{tls}, client certificate"),
-        _ => tls.to_string(),
+    let detail = match crate::client_cert::expiry(conn) {
+        Some(until) if conn.use_default_certs => format!("{tls}, default client certificate valid until {until}"),
+        Some(until) => format!("{tls}, client certificate valid until {until}"),
+        None => tls.to_string(),
     };
     steps.ok("Encrypt and log in", detail, started);
 
