@@ -54,6 +54,8 @@ export interface Settings {
   defaultSslRootCert: string;
   defaultSslCert: string;
   defaultSslKey: string;
+  /** Shell command run when a connection finds its client certificate expired (also read by the backend from settings.json). */
+  certRenewCommand: string;
   highlightProd: boolean;
   confirmProdWrites: boolean;
   // psql
@@ -103,6 +105,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultSslRootCert: "",
   defaultSslCert: "",
   defaultSslKey: "",
+  certRenewCommand: "",
   psqlPath: "",
   psqlFallback: true,
   warnBackslash: true,
@@ -162,6 +165,7 @@ export function normalizeSettings(raw: unknown): Settings {
     defaultSslRootCert: path(raw.defaultSslRootCert, d.defaultSslRootCert),
     defaultSslCert: path(raw.defaultSslCert, d.defaultSslCert),
     defaultSslKey: path(raw.defaultSslKey, d.defaultSslKey),
+    certRenewCommand: typeof raw.certRenewCommand === "string" ? raw.certRenewCommand.trim().slice(0, 2000) : d.certRenewCommand,
     highlightProd: bool(raw.highlightProd, d.highlightProd),
     confirmProdWrites: bool(raw.confirmProdWrites, d.confirmProdWrites),
     psqlPath: path(raw.psqlPath, d.psqlPath),

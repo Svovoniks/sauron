@@ -88,6 +88,7 @@ pub async fn connect_session(
     guard: &Guard<'_>,
 ) -> Result<Client, String> {
     let mut cfg = build_config(conn, password)?;
+    client_cert::renew_if_expired(conn).await?;
     let tls = tls_connector(conn)?;
 
     let (client, connection) = match cfg.connect(tls.clone()).await {

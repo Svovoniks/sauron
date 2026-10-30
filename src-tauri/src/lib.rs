@@ -72,6 +72,18 @@ async fn test_connection(connection: ConnectionParams, password: Option<String>)
     Ok(test_connection::run(&connection, &password, &guard).await)
 }
 
+/// "Renew now" in Settings: runs the certificate renewal command and returns how long the default client
+/// certificate is valid now (None when no default certificate is set).
+#[tauri::command]
+async fn renew_certificates(command: String, root: String, cert: String, key: String) -> Result<Option<String>, String> {
+    let files = client_cert::Files {
+        root: root.trim().to_string(),
+        cert: cert.trim().to_string(),
+        key: key.trim().to_string(),
+    };
+    client_cert::renew_now(&command, &files).await
+}
+
 /// Backslash commands: the text goes to the real `psql`, unfiltered. If `psql` is not installed the
 /// built-in read-only catalog commands (`meta.rs`) are used instead.
 #[tauri::command]
@@ -233,6 +245,7 @@ pub fn run() {
             agent_log_latest,
             agent_log_result,
             agent_log_clear,
+            renew_certificates,
             updater::check_for_update,
             updater::install_update,
             updater::restart_app,

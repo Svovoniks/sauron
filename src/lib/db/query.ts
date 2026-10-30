@@ -34,6 +34,15 @@ export async function testConnection(connection: Connection, password?: string):
   }
 }
 
+/** "Renew now" in Settings: runs the renewal command, resolves with how long the client certificate is valid now (null when none is set). */
+export async function renewCertificates(command: string, files: { root: string; cert: string; key: string }): Promise<string | null> {
+  try {
+    return await invoke<string | null>("renew_certificates", { command, ...files });
+  } catch (error) {
+    throw toError(error);
+  }
+}
+
 /** Backslash commands (`\dt`, `\d table`, ...), implemented natively - no psql needed. */
 export async function executeMetaCommand(
   connection: Connection,

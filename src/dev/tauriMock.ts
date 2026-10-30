@@ -264,6 +264,9 @@ export function installDevMock() {
         return "/Users/demo/Library/Application Support/com.svovoniks.sauron";
       case "mcp_executable":
         return "/Applications/sauron.app/Contents/MacOS/sauron";
+      case "renew_certificates":
+        await sleep(800);
+        return "2026-11-06 08:49 UTC";
       case "test_connection": {
         const connection = args.connection as { host: string };
         await sleep(400);
