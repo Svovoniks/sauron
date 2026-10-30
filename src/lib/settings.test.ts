@@ -21,6 +21,10 @@ describe("normalizeSettings", () => {
     expect(s.historyKeep).toBe("7");
     expect(s.execScope).toBe("statement");
   });
+  test("default certificate paths are trimmed strings", () => {
+    const s = normalizeSettings({ defaultSslRootCert: " ~/c/root.pem ", defaultSslCert: "/c/cert.pem", defaultSslKey: 42 });
+    expect([s.defaultSslRootCert, s.defaultSslCert, s.defaultSslKey]).toEqual(["~/c/root.pem", "/c/cert.pem", ""]);
+  });
   test("row limit must be a positive integer within the backend maximum", () => {
     expect(normalizeSettings({ rowLimit: 0 }).rowLimit).toBe(DEFAULT_SETTINGS.rowLimit);
     expect(normalizeSettings({ rowLimit: 1_000_001 }).rowLimit).toBe(DEFAULT_SETTINGS.rowLimit);

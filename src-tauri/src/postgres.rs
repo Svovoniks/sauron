@@ -6,18 +6,26 @@ use tokio_postgres::types::{Kind, Type};
 use tokio_postgres::{Client, Config, SimpleQueryMessage, SimpleQueryRow};
 
 use crate::cancel::{Guard, Killer};
+use crate::client_cert;
 use crate::model::{ColumnMeta, ConnectionParams, QueryResult, SslMode, StatementError, StatementOutcome, CANCELLED};
 
 const CURSOR_NAME: &str = "sauron_cursor";
 
-pub fn tls_connector(ssl_mode: SslMode) -> Result<MakeTlsConnector, String> {
+pub fn tls_connector(conn: &ConnectionParams) -> Result<MakeTlsConnector, String> {
     let mut builder = native_tls::TlsConnector::builder();
-    if ssl_mode != SslMode::Verify {
+    match conn.ssl_mode {
+        SslMode::Verify => {}
+        SslMode::VerifyCa => {
+            builder.danger_accept_invalid_hostnames(true);
+        }
         // Same semantics as libpq's `require`: encrypt, but do not validate the certificate.
-        builder
-            .danger_accept_invalid_certs(true)
-            .danger_accept_invalid_hostnames(true);
+        SslMode::Disable | SslMode::Prefer | SslMode::Require => {
+            builder
+                .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_hostnames(true);
+        }
     }
+    client_cert::configure(&mut builder, conn)?;
     let connector = builder.build().map_err(|e| e.to_string())?;
     Ok(MakeTlsConnector::new(connector))
 }
@@ -41,7 +49,7 @@ pub fn build_config(conn: &ConnectionParams, password: &str) -> Result<Config, S
     cfg.ssl_mode(match conn.ssl_mode {
         SslMode::Disable => tokio_postgres::config::SslMode::Disable,
         SslMode::Prefer => tokio_postgres::config::SslMode::Prefer,
-        SslMode::Require | SslMode::Verify => tokio_postgres::config::SslMode::Require,
+        SslMode::Require | SslMode::VerifyCa | SslMode::Verify => tokio_postgres::config::SslMode::Require,
     });
     Ok(cfg)
 }
@@ -80,7 +88,7 @@ pub async fn connect_session(
     guard: &Guard<'_>,
 ) -> Result<Client, String> {
     let mut cfg = build_config(conn, password)?;
-    let tls = tls_connector(conn.ssl_mode)?;
+    let tls = tls_connector(conn)?;
 
     let (client, connection) = match cfg.connect(tls.clone()).await {
         Ok(connected) => connected,
@@ -767,7 +775,12 @@ mod integration_tests {
         });
         let mut cfg = tokio_postgres::Config::new();
         cfg.host("127.0.0.1").port(port).user("u").ssl_mode(tokio_postgres::config::SslMode::Prefer);
-        let tls = tls_connector(SslMode::Prefer).unwrap();
+        let params: ConnectionParams = serde_json::from_value(serde_json::json!({
+            "id": "test", "host": "127.0.0.1", "port": port.to_string(), "username": "u", "database": "",
+            "db_type": "postgres", "ssl_mode": "prefer",
+        }))
+        .unwrap();
+        let tls = tls_connector(&params).unwrap();
         let err = cfg.connect(tls.clone()).await.err().expect("the handshake cannot succeed");
         assert!(tls_attempt_failed(&err), "{err:?}");
 
@@ -777,6 +790,34 @@ mod integration_tests {
         cfg.port(closed_port);
         let err = cfg.connect(tls).await.err().expect("nothing listens there");
         assert!(!tls_attempt_failed(&err), "{err:?}");
+    }
+
+    /// Client certificate login (pg_hba "cert"), the way the STG databases are reached. Skipped unless
+    /// SAURON_TEST_PG_CERT_PORT and SAURON_TEST_PG_CERT_DIR (holding stepcaroot.pem, certificate.pem and
+    /// private.pem) are set; the server certificate must be issued for a name other than 127.0.0.1.
+    #[tokio::test]
+    async fn client_certificate_login() {
+        let (Ok(port), Ok(dir)) = (std::env::var("SAURON_TEST_PG_CERT_PORT"), std::env::var("SAURON_TEST_PG_CERT_DIR")) else {
+            return;
+        };
+        let conn = |ssl: &str, with_client_cert: bool| -> ConnectionParams {
+            let file = |name: &str| if with_client_cert || name == "stepcaroot.pem" { format!("{dir}/{name}") } else { String::new() };
+            serde_json::from_value(serde_json::json!({
+                "id": "test", "host": "127.0.0.1", "port": port,
+                "username": std::env::var("SAURON_TEST_PG_USER").unwrap_or_else(|_| "sauron".into()),
+                "database": "postgres", "db_type": "postgres", "ssl_mode": ssl,
+                "ssl_root_cert": file("stepcaroot.pem"), "ssl_cert": file("certificate.pem"), "ssl_key": file("private.pem"),
+            }))
+            .unwrap()
+        };
+        let sql = ["select ssl, client_dn is not null from pg_stat_ssl where pid = pg_backend_pid()"];
+        let row = run(&conn("verify-ca", true), &sql, 1).await.unwrap().rows.remove(0);
+        assert_eq!(row, vec![Some("true".to_string()), Some("true".to_string())]);
+        // verify-ca does not check the host name, full verification does
+        let err = run(&conn("verify", true), &sql, 1).await.unwrap_err();
+        assert!(!err.is_empty());
+        // the server insists on a client certificate
+        assert!(run(&conn("verify-ca", false), &sql, 1).await.is_err());
     }
 
     #[tokio::test]

@@ -10,6 +10,9 @@ pub enum SslMode {
     #[default]
     Prefer,
     Require,
+    /// Postgres only (libpq's verify-ca): the certificate must chain to a trusted root, the host name is not checked.
+    #[serde(rename = "verify-ca")]
+    VerifyCa,
     Verify,
 }
 
@@ -36,6 +39,16 @@ pub struct ConnectionParams {
     pub read_only: bool,
     #[serde(default)]
     pub timeout_secs: u64,
+    /// Postgres certificate files (libpq's sslrootcert, sslcert and sslkey); empty when not used.
+    #[serde(default)]
+    pub ssl_root_cert: String,
+    #[serde(default)]
+    pub ssl_cert: String,
+    #[serde(default)]
+    pub ssl_key: String,
+    /// Use the default certificate files from Settings instead of the three above.
+    #[serde(default)]
+    pub use_default_certs: bool,
 }
 
 impl ConnectionParams {

@@ -1,6 +1,7 @@
 mod agent_log;
 mod cancel;
 mod clickhouse;
+mod client_cert;
 mod mcp;
 mod meta;
 mod model;
@@ -210,6 +211,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             secrets::init(app.path().app_data_dir()?);
+            client_cert::init(app.path().app_data_dir()?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

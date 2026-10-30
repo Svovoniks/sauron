@@ -27,6 +27,10 @@ const conn = (id: string): Connection => ({
   timeout_secs: 0,
   env: "",
   description: "",
+  ssl_root_cert: "",
+  ssl_cert: "",
+  ssl_key: "",
+  use_default_certs: false,
 });
 const query = (id: string) => ({ id, name: id, query: `select '${id}'` });
 
