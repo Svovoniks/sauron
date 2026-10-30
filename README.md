@@ -69,7 +69,7 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
    Actions secret `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, empty if the key has no password), otherwise the
    release workflow cannot sign the update bundles. Generate a new pair with `bunx tauri signer generate -w ~/.tauri/sauron-updater.key`
    (and put the new public key in `tauri.conf.json`); never commit the private key
- - the updater reads `latest.json` from the *latest published* release, so it only sees a release after you publish the draft;
+ - the updater reads `latest.json` from the *latest published* release, so it only sees a release once every platform has uploaded;
    versions released before this feature existed have to be updated by hand once
 
 ## macOS passwords
@@ -104,7 +104,7 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
    `t(id bigint, name text, flag bool, arr int[], j jsonb)` holding 2500 rows) or `SAURON_TEST_CH_PORT` (ClickHouse,
    see the comment in `src-tauri/src/clickhouse.rs`) is set
  - releases: bump the version in `package.json` and `src-tauri/Cargo.toml`, then push a tag `app-v<version>`;
-   CI builds a **draft** release that you publish by hand
+   CI builds a draft release and publishes it once every platform has uploaded its assets
 
 ## Disclaimer
  - This app is mostly ai generated so there is some weird stuff happening
