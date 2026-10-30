@@ -1,8 +1,9 @@
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { parseConnectionUrl } from "../lib/connUrl";
 import { testConnection } from "../lib/db/query";
 import { defaultPort, ENV_LABEL, type Connection, type ConnectionDraft, type DbType, type Env, type SslMode, type TestReport } from "../types/app";
-import { CheckIcon, EyeIcon, EyeOffIcon, LinkIcon, WarningIcon } from "./icons";
+import { CheckIcon, EyeIcon, EyeOffIcon, FileIcon, LinkIcon, WarningIcon } from "./icons";
 import { Modal } from "./Modal";
 
 interface ConnectionModalProps {
@@ -19,6 +20,8 @@ interface ConnectionModalProps {
   onTested?: (draft: ConnectionDraft, report: TestReport | null, error: string | null) => void;
   /** Reads the saved password from the keychain (for the eye icon). */
   loadSavedPassword: () => Promise<string | null>;
+  /** The default certificate files from Settings, for connections that use them. */
+  defaultCerts: DefaultCerts;
 }
 
 const SSL_OPTIONS: Record<DbType, { value: SslMode; label: string }[]> = {
@@ -26,6 +29,7 @@ const SSL_OPTIONS: Record<DbType, { value: SslMode; label: string }[]> = {
     { value: "disable", label: "Off (no encryption)" },
     { value: "prefer", label: "Prefer (encrypt if the server supports it)" },
     { value: "require", label: "Require (encrypted, certificate not checked)" },
+    { value: "verify-ca", label: "Verify CA (encrypted, certificate authority checked)" },
     { value: "verify", label: "Verify (encrypted, certificate checked)" },
   ],
   clickhouse: [
@@ -39,29 +43,46 @@ const SSL_HINT: Record<SslMode, string> = {
   disable: "No encryption. Only for local databases.",
   prefer: "Encrypts when the server supports it; falls back to plain text.",
   require: "Always encrypted, but the certificate isn’t checked.",
+  "verify-ca": "Encrypted, and the certificate must be signed by the root certificate below (or a system one). The host name isn’t checked.",
   verify: "Encrypted, and the certificate and host name are verified. Recommended for remote servers.",
 };
+
+type CertField = "ssl_root_cert" | "ssl_cert" | "ssl_key";
+type DefaultCerts = Record<CertField, string>;
+
+const CERT_FIELDS: { field: CertField; label: string; placeholder: string }[] = [
+  { field: "ssl_root_cert", label: "Root certificate", placeholder: "~/certs/stepcaroot.pem" },
+  { field: "ssl_cert", label: "Client certificate", placeholder: "~/certs/certificate.pem" },
+  { field: "ssl_key", label: "Client key", placeholder: "~/certs/private.pem" },
+];
 
 const TIMEOUTS = [15, 30, 60, 300, 900, 0];
 const timeoutLabel = (secs: number) => (secs === 0 ? "none" : secs >= 60 && secs % 60 === 0 ? `${secs / 60} min` : `${secs} s`);
 
-function validate(draft: ConnectionDraft): string | null {
+function validate(draft: ConnectionDraft, defaultCerts: DefaultCerts): string | null {
   if (!draft.host.trim()) return "Host is required.";
   const port = Number(draft.port);
   if (!/^\d+$/.test(draft.port.trim()) || port < 1 || port > 65535) return "Port must be a number from 1 to 65535.";
   if (!Number.isInteger(draft.timeout_secs) || draft.timeout_secs < 0) return "Timeout must be 0 or a positive number.";
+  if (draft.db_type !== "postgres") return null;
+  const certs = draft.use_default_certs ? defaultCerts : draft;
+  if (draft.use_default_certs && !certs.ssl_root_cert && !certs.ssl_cert) return "No default certificates are set yet: add them in Settings → Connections, or turn off “Use the default certificates”.";
+  if (!certs.ssl_cert.trim() !== !certs.ssl_key.trim())
+    return draft.use_default_certs ? "The default certificates in Settings need both the client certificate and the client key, or neither." : "Set both the client certificate and the client key, or neither.";
+  if ((certs.ssl_cert.trim() || certs.ssl_root_cert.trim()) && draft.ssl_mode === "disable") return "Certificates need encryption: pick a TLS mode other than Off.";
   return null;
 }
 
 const ENV_CHOICES: Env[] = ["local", "staging", "prod"];
 
-export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl, onClose, onSave, onTested, loadSavedPassword }: ConnectionModalProps) {
+export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl, onClose, onSave, onTested, loadSavedPassword, defaultCerts }: ConnectionModalProps) {
   const [draft, setDraft] = useState<ConnectionDraft>(initial);
   const [showPassword, setShowPassword] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [urlText, setUrlText] = useState("");
   const [urlState, setUrlState] = useState<"" | "ok" | "bad">("");
+  const [certsOpen, setCertsOpen] = useState(() => initial.use_default_certs || CERT_FIELDS.some(({ field }) => initial[field] !== ""));
   const [test, setTest] = useState<{ running: boolean; report: TestReport | null; error: string | null }>({ running: false, report: null, error: null });
   const urlRef = useRef<HTMLInputElement | null>(null);
   const tempId = useRef(`test-${crypto.randomUUID()}`);
@@ -94,7 +115,12 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
     patch({ ...rest, name: draft.name.trim() ? draft.name : (name ?? "") });
   };
 
-  const error = validate(draft);
+  const error = validate(draft, defaultCerts);
+
+  const browse = async (field: CertField) => {
+    const selected = await open({ multiple: false });
+    if (typeof selected === "string") patch({ [field]: selected });
+  };
 
   const runTest = async () => {
     setSubmitted(true);
@@ -113,6 +139,10 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
       timeout_secs: draft.timeout_secs,
       env: draft.env,
       description: draft.description,
+      ssl_root_cert: draft.ssl_root_cert.trim(),
+      ssl_cert: draft.ssl_cert.trim(),
+      ssl_key: draft.ssl_key.trim(),
+      use_default_certs: draft.use_default_certs,
     };
     try {
       const report = await testConnection(connection, draft.password);
@@ -132,7 +162,8 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
         onSubmit={(event) => {
           event.preventDefault();
           setSubmitted(true);
-          if (!error) onSave({ ...draft, host: draft.host.trim(), port: draft.port.trim() });
+          if (!error)
+            onSave({ ...draft, host: draft.host.trim(), port: draft.port.trim(), ssl_root_cert: draft.ssl_root_cert.trim(), ssl_cert: draft.ssl_cert.trim(), ssl_key: draft.ssl_key.trim() });
         }}
       >
         <div className="form-group">
@@ -262,6 +293,47 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
           </select>
           <p className="field-hint">{SSL_HINT[draft.ssl_mode]}</p>
         </div>
+
+        {draft.db_type === "postgres" ? (
+          <details className="cert-files" onToggle={(event) => setCertsOpen(event.currentTarget.open)} open={certsOpen}>
+            <summary>
+              Certificates <span className="optional">(optional)</span>
+            </summary>
+            <p className="field-hint">
+              For databases that log you in by client certificate instead of a password (e.g. STG Postgres with keex certificates: port 6433, Verify CA, password empty). The files are read on every
+              connect, so after re-issuing the certificate just overwrite them.
+            </p>
+            <label className="safe-card" htmlFor="use-default-certs">
+              <input checked={draft.use_default_certs} className="toggle-input" id="use-default-certs" onChange={(event) => patch({ use_default_certs: event.target.checked })} type="checkbox" />
+              <span aria-hidden="true" className="toggle-track" />
+              <span>
+                <b>Use the default certificates</b>
+                <small>The ones set in Settings → Connections, shared by every connection that uses them.</small>
+              </span>
+            </label>
+            {draft.use_default_certs ? (
+              <ul className="cert-defaults">
+                {CERT_FIELDS.map(({ field, label }) => (
+                  <li key={field}>
+                    <span>{label}</span>
+                    <code>{defaultCerts[field] || "not set"}</code>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {draft.use_default_certs ? null : CERT_FIELDS.map(({ field, label, placeholder }) => (
+              <div className="form-group" key={field}>
+                <label htmlFor={field}>{label}</label>
+                <div className="password-input-container">
+                  <input autoCapitalize="none" autoCorrect="off" id={field} onChange={(event) => patch({ [field]: event.target.value })} placeholder={placeholder} spellCheck={false} type="text" value={draft[field]} />
+                  <button aria-label={`Choose the ${label.toLowerCase()} file`} className="password-toggle" onClick={() => void browse(field)} title="Choose file" type="button">
+                    <FileIcon />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </details>
+        ) : null}
 
         <div className="safe-grid">
           <label className="safe-card" htmlFor="read-only">

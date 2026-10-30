@@ -465,8 +465,17 @@ export default function App() {
 
   // --- connections ----------------------------------------------------------------------------
   const draftDefaults = useMemo(
-    () => ({ readOnly: settings.newConnectionReadOnly, timeoutSecs: settings.defaultTimeoutSecs, sslMode: settings.defaultSslMode }),
-    [settings.newConnectionReadOnly, settings.defaultTimeoutSecs, settings.defaultSslMode],
+    () => ({
+      readOnly: settings.newConnectionReadOnly,
+      timeoutSecs: settings.defaultTimeoutSecs,
+      sslMode: settings.defaultSslMode,
+      useDefaultCerts: Boolean(settings.defaultSslRootCert || settings.defaultSslCert),
+    }),
+    [settings.newConnectionReadOnly, settings.defaultTimeoutSecs, settings.defaultSslMode, settings.defaultSslRootCert, settings.defaultSslCert],
+  );
+  const defaultCerts = useMemo(
+    () => ({ ssl_root_cert: settings.defaultSslRootCert, ssl_cert: settings.defaultSslCert, ssl_key: settings.defaultSslKey }),
+    [settings.defaultSslRootCert, settings.defaultSslCert, settings.defaultSslKey],
   );
 
   const addConnection = (focusUrl = false) =>
@@ -1271,6 +1280,7 @@ export default function App() {
 
       {connectionModal && (
         <ConnectionModal
+          defaultCerts={defaultCerts}
           focusUrl={connectionModal.focusUrl}
           hasSavedPassword={connectionModal.hasSavedPassword}
           initial={connectionModal.draft}

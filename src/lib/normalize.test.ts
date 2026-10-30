@@ -25,6 +25,10 @@ const fullConn: Connection = {
   timeout_secs: 30,
   env: "",
   description: "",
+  ssl_root_cert: "",
+  ssl_cert: "",
+  ssl_key: "",
+  use_default_certs: false,
 };
 
 describe("normalizeConnection", () => {
@@ -129,6 +133,13 @@ describe("normalizeConnection", () => {
       expect(normalizeConnection({ db_type: "clickhouse", host: "http://ch.io" })!.connection.ssl_mode).toBe("disable");
       expect(normalizeConnection({ db_type: "clickhouse", host: "ch.io" })!.connection.ssl_mode).toBe("disable");
       expect(normalizeConnection({ db_type: "clickhouse" })!.connection.ssl_mode).toBe("disable");
+    });
+
+    test("verify-ca and certificate paths are kept", () => {
+      const c = normalizeConnection({ db_type: "postgres", ssl_mode: "verify-ca", ssl_root_cert: " ~/c/root.pem ", ssl_cert: "/c/cert.pem", ssl_key: 7 })!.connection;
+      expect(c).toMatchObject({ ssl_mode: "verify-ca", ssl_root_cert: "~/c/root.pem", ssl_cert: "/c/cert.pem", ssl_key: "", use_default_certs: false });
+      expect(normalizeConnection({ use_default_certs: true })!.connection.use_default_certs).toBe(true);
+      expect(normalizeConnection({ use_default_certs: "yes" })!.connection.use_default_certs).toBe(false);
     });
 
     test("explicit ssl_mode wins over host scheme", () => {
@@ -613,6 +624,10 @@ describe("normalizeBackup", () => {
       timeout_secs: 0,
       env: "",
       description: "",
+      ssl_root_cert: "",
+      ssl_cert: "",
+      ssl_key: "",
+      use_default_certs: false,
     });
     expect(b.results.ch![0]!.rows).toEqual([[null, '{"c":1}']]);
   });

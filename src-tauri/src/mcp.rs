@@ -94,6 +94,7 @@ pub fn run(allow_writes: bool) -> Result<(), String> {
         .ok_or("Could not find the app data directory")?
         .join(APP_IDENTIFIER);
     secrets::init(data_dir.clone());
+    crate::client_cert::init(data_dir.clone());
     let server = Arc::new(Server {
         data_dir,
         allow_writes,

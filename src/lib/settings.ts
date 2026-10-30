@@ -50,6 +50,10 @@ export interface Settings {
   newConnectionReadOnly: boolean;
   defaultTimeoutSecs: number;
   defaultSslMode: SslDefault;
+  /** Default certificate files (libpq's sslrootcert / sslcert / sslkey) for connections that use them; also read by the backend from settings.json. */
+  defaultSslRootCert: string;
+  defaultSslCert: string;
+  defaultSslKey: string;
   highlightProd: boolean;
   confirmProdWrites: boolean;
   // psql
@@ -96,6 +100,9 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultSslMode: "require",
   highlightProd: true,
   confirmProdWrites: true,
+  defaultSslRootCert: "",
+  defaultSslCert: "",
+  defaultSslKey: "",
   psqlPath: "",
   psqlFallback: true,
   warnBackslash: true,
@@ -111,6 +118,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
   typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 const bool = (v: unknown, fallback: boolean) => (typeof v === "boolean" ? v : fallback);
+const path = (v: unknown, fallback: string) => (typeof v === "string" ? v.trim().slice(0, 500) : fallback);
 const int = (v: unknown, min: number, max: number, fallback: number) =>
   typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : fallback;
 
@@ -151,9 +159,12 @@ export function normalizeSettings(raw: unknown): Settings {
     newConnectionReadOnly: bool(raw.newConnectionReadOnly, d.newConnectionReadOnly),
     defaultTimeoutSecs: int(raw.defaultTimeoutSecs, 0, 86_400, d.defaultTimeoutSecs),
     defaultSslMode: oneOf(raw.defaultSslMode, ["disable", "prefer", "require", "verify"], d.defaultSslMode),
+    defaultSslRootCert: path(raw.defaultSslRootCert, d.defaultSslRootCert),
+    defaultSslCert: path(raw.defaultSslCert, d.defaultSslCert),
+    defaultSslKey: path(raw.defaultSslKey, d.defaultSslKey),
     highlightProd: bool(raw.highlightProd, d.highlightProd),
     confirmProdWrites: bool(raw.confirmProdWrites, d.confirmProdWrites),
-    psqlPath: typeof raw.psqlPath === "string" ? raw.psqlPath.trim().slice(0, 500) : d.psqlPath,
+    psqlPath: path(raw.psqlPath, d.psqlPath),
     psqlFallback: bool(raw.psqlFallback, d.psqlFallback),
     warnBackslash: bool(raw.warnBackslash, d.warnBackslash),
     shortcuts,

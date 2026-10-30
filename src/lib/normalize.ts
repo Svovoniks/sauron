@@ -24,7 +24,7 @@ const uuid = () => crypto.randomUUID();
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const idOrNew = (v: unknown): string => (str(v).trim() === "" || DANGEROUS_KEYS.has(str(v)) ? uuid() : str(v));
 const DB_TYPES: readonly string[] = ["postgres", "clickhouse"];
-const SSL_MODES: readonly string[] = ["disable", "prefer", "require", "verify"];
+const SSL_MODES: readonly string[] = ["disable", "prefer", "require", "verify-ca", "verify"];
 
 const isDbType = (v: unknown): v is DbType => typeof v === "string" && DB_TYPES.includes(v);
 const isSslMode = (v: unknown): v is SslMode => typeof v === "string" && SSL_MODES.includes(v);
@@ -73,6 +73,10 @@ export function normalizeConnection(raw: unknown): { connection: Connection; leg
     timeout_secs,
     env: typeof raw.env === "string" && (ENVS as readonly string[]).includes(raw.env) ? (raw.env as Env) : "",
     description: str(raw.description).trim(),
+    ssl_root_cert: str(raw.ssl_root_cert).trim(),
+    ssl_cert: str(raw.ssl_cert).trim(),
+    ssl_key: str(raw.ssl_key).trim(),
+    use_default_certs: raw.use_default_certs === true,
   };
 
   const legacyPassword = typeof raw.password === "string" && raw.password !== "" ? raw.password : null;

@@ -1,9 +1,16 @@
 import type { Connection, ConnectionDraft, Env, SslMode } from "../types/app";
 
 /** Fields a pasted URL can fill in. Anything the URL does not say stays undefined. */
-export type ParsedUrl = Partial<Pick<ConnectionDraft, "db_type" | "host" | "port" | "database" | "username" | "password" | "ssl_mode" | "name" | "env">>;
+export type ParsedUrl = Partial<Pick<ConnectionDraft, "db_type" | "host" | "port" | "database" | "username" | "password" | "ssl_mode" | "ssl_root_cert" | "ssl_cert" | "ssl_key" | "name" | "env">>;
 
 const URL_RE = /^(postgres(?:ql)?|clickhouse|https?):\/\/(?:([^:@/]*)(?::([^@/]*))?@)?(\[[^\]]+\]|[^:/?#]+)(?::(\d+))?(?:\/([^?#]*))?(?:\?([^#]*))?/i;
+
+/** libpq's certificate file parameters and the connection fields they fill. */
+const CERT_PARAMS = [
+  ["sslrootcert", "ssl_root_cert"],
+  ["sslcert", "ssl_cert"],
+  ["sslkey", "ssl_key"],
+] as const;
 
 const safeDecode = (value: string) => {
   try {
@@ -43,7 +50,11 @@ export function parseConnectionUrl(text: string): ParsedUrl | null {
 
   const ssl = params.get("sslmode") ?? params.get("ssl_mode");
   if (postgres) {
-    if (ssl) parsed.ssl_mode = /^verify/.test(ssl) ? "verify" : (["disable", "prefer", "require"].includes(ssl) ? (ssl as SslMode) : "require");
+    if (ssl) parsed.ssl_mode = ssl === "verify-ca" ? "verify-ca" : /^verify/.test(ssl) ? "verify" : (["disable", "prefer", "require"].includes(ssl) ? (ssl as SslMode) : "require");
+    for (const [param, field] of CERT_PARAMS) {
+      const path = params.get(param);
+      if (path) parsed[field] = path;
+    }
   } else if (lower === "https" || params.get("secure") === "true" || params.get("secure") === "1") {
     parsed.ssl_mode = "verify";
   } else if (lower === "http" || lower === "clickhouse") {
@@ -58,13 +69,16 @@ export function parseConnectionUrl(text: string): ParsedUrl | null {
 }
 
 /** Connection URL without the password, for "Copy connection URL". */
-export function formatConnectionUrl(c: Pick<Connection, "db_type" | "host" | "port" | "database" | "username" | "ssl_mode">): string {
+export function formatConnectionUrl(
+  c: Pick<Connection, "db_type" | "host" | "port" | "database" | "username" | "ssl_mode"> & Partial<Pick<Connection, "ssl_root_cert" | "ssl_cert" | "ssl_key">>,
+): string {
   const user = c.username ? `${encodeURIComponent(c.username)}@` : "";
   const host = c.host.includes(":") && !c.host.startsWith("[") ? `[${c.host}]` : c.host;
   const db = c.database ? `/${encodeURIComponent(c.database)}` : "";
   if (c.db_type === "postgres") {
     const mode = c.ssl_mode === "verify" ? "verify-full" : c.ssl_mode;
-    return `postgresql://${user}${host}:${c.port}${db}?sslmode=${mode}`;
+    const certs = CERT_PARAMS.filter(([, field]) => c[field]).map(([param, field]) => `&${param}=${encodeURIComponent(c[field] ?? "")}`).join("");
+    return `postgresql://${user}${host}:${c.port}${db}?sslmode=${mode}${certs}`;
   }
   return `${c.ssl_mode === "disable" ? "http" : "https"}://${user}${host}:${c.port}${db}`;
 }

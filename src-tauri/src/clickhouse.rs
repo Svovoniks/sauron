@@ -436,7 +436,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "id": "x", "host": host, "port": port, "username": "u", "database": "d",
             "db_type": "clickhouse",
-            "ssl_mode": match ssl { SslMode::Disable => "disable", SslMode::Prefer => "prefer", SslMode::Require => "require", SslMode::Verify => "verify" },
+            "ssl_mode": match ssl { SslMode::Disable => "disable", SslMode::Prefer => "prefer", SslMode::Require => "require", SslMode::VerifyCa => "verify-ca", SslMode::Verify => "verify" },
         }))
         .unwrap()
     }

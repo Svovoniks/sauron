@@ -4,9 +4,10 @@ export type DbType = "postgres" | "clickhouse";
  * disable: no TLS (ClickHouse: http)
  * prefer:  Postgres only - try TLS, fall back to plaintext
  * require: TLS without certificate verification (ClickHouse: https, no verification)
+ * verify-ca: Postgres only - the certificate must chain to a trusted root, the host name is not checked
  * verify:  TLS with full certificate + hostname verification
  */
-export type SslMode = "disable" | "prefer" | "require" | "verify";
+export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify";
 
 /** What a connection is used for; "prod" turns on the production guard and the red markers. */
 export type Env = "" | "local" | "staging" | "prod";
@@ -29,6 +30,12 @@ export interface Connection {
   env: Env;
   /** Optional free-text note about the connection, shown to AI agents over MCP. */
   description: string;
+  /** Postgres certificate file paths (libpq's sslrootcert / sslcert / sslkey), "" when unused. Read on every connect. */
+  ssl_root_cert: string;
+  ssl_cert: string;
+  ssl_key: string;
+  /** Use the default certificate files from Settings instead of the three above. */
+  use_default_certs: boolean;
 }
 
 /** Connection being edited in the modal: `password === ""` on an existing connection means "unchanged". */
@@ -128,6 +135,8 @@ export interface DraftDefaults {
   readOnly: boolean;
   timeoutSecs: number;
   sslMode: SslMode;
+  /** Default certificates are set in Settings, so new Postgres connections start out using them. */
+  useDefaultCerts: boolean;
 }
 
 export const emptyDraft = (defaults: Partial<DraftDefaults> = {}): ConnectionDraft => ({
@@ -143,6 +152,10 @@ export const emptyDraft = (defaults: Partial<DraftDefaults> = {}): ConnectionDra
   timeout_secs: defaults.timeoutSecs ?? 60,
   env: "",
   description: "",
+  ssl_root_cert: "",
+  ssl_cert: "",
+  ssl_key: "",
+  use_default_certs: defaults.useDefaultCerts ?? false,
   password: "",
 });
 

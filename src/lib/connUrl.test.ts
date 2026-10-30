@@ -24,6 +24,15 @@ describe("parseConnectionUrl", () => {
     expect(p.name).toBe("local");
     expect(p.ssl_mode).toBeUndefined();
   });
+  test("verify-ca and libpq certificate files", () => {
+    expect(parseConnectionUrl("postgresql://me@db.stg.internal:6433/app?sslmode=verify-ca&sslrootcert=%2Fc%2Froot.pem&sslcert=/c/cert.pem&sslkey=/c/key.pem")).toMatchObject({
+      port: "6433",
+      ssl_mode: "verify-ca",
+      ssl_root_cert: "/c/root.pem",
+      ssl_cert: "/c/cert.pem",
+      ssl_key: "/c/key.pem",
+    });
+  });
   test("clickhouse over http and https", () => {
     expect(parseConnectionUrl("http://ch.internal:8123")).toMatchObject({ db_type: "clickhouse", port: "8123", ssl_mode: "disable" });
     expect(parseConnectionUrl("https://ch.internal")).toMatchObject({ db_type: "clickhouse", port: "8443", ssl_mode: "verify" });
@@ -53,5 +62,8 @@ describe("formatConnectionUrl", () => {
   test("no password, tls mode included", () => {
     expect(formatConnectionUrl({ db_type: "postgres", host: "h", port: "5432", database: "d", username: "u", ssl_mode: "verify" })).toBe("postgresql://u@h:5432/d?sslmode=verify-full");
     expect(formatConnectionUrl({ db_type: "clickhouse", host: "h", port: "8123", database: "", username: "", ssl_mode: "disable" })).toBe("http://h:8123");
+    expect(
+      formatConnectionUrl({ db_type: "postgres", host: "h", port: "6433", database: "d", username: "u", ssl_mode: "verify-ca", ssl_root_cert: "/c/root.pem", ssl_cert: "", ssl_key: "/c/k.pem" }),
+    ).toBe("postgresql://u@h:6433/d?sslmode=verify-ca&sslrootcert=%2Fc%2Froot.pem&sslkey=%2Fc%2Fk.pem");
   });
 });

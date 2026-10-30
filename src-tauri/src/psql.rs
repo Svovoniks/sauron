@@ -11,6 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::cancel::Guard;
+use crate::client_cert;
 use crate::model::{ConnectionParams, SslMode};
 
 pub enum PsqlError {
@@ -84,6 +85,7 @@ async fn run_with_binary(
                 SslMode::Disable => "disable",
                 SslMode::Prefer => "prefer",
                 SslMode::Require => "require",
+                SslMode::VerifyCa => "verify-ca",
                 SslMode::Verify => "verify-full",
             },
         )
@@ -91,6 +93,17 @@ async fn run_with_binary(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+
+    let files = client_cert::files(conn).map_err(PsqlError::Failed)?;
+    for (var, path) in [
+        ("PGSSLROOTCERT", &files.root),
+        ("PGSSLCERT", &files.cert),
+        ("PGSSLKEY", &files.key),
+    ] {
+        if !path.is_empty() {
+            command.env(var, client_cert::expand(path));
+        }
+    }
 
     // The connection's own settings still apply (a script can switch them off again).
     let mut options = Vec::new();
