@@ -24,6 +24,8 @@ const RENEW_TIMEOUT: Duration = Duration::from_secs(300);
 /// Where settings.json lives (the app data directory), for the default certificates.
 pub fn init(data_dir: PathBuf) {
     let _ = DATA_DIR.set(data_dir);
+    #[cfg(target_os = "macos")]
+    temp_keychain::remove_stale(&std::env::temp_dir());
 }
 
 /// Certificate file paths as typed, "" when unused.
@@ -340,8 +342,94 @@ fn identity(cert: &[u8], key_pkcs8: &[u8]) -> Result<Identity, String> {
     let chain: Vec<&[u8]> = chain.iter().map(Vec::as_slice).collect();
     let bundle = p12::PFX::new_with_cas(leaf, key_pkcs8, &chain, PASSWORD, "sauron")
         .ok_or("Could not bundle the client certificate and key")?;
+    #[cfg(target_os = "macos")]
+    return temp_keychain::import(PASSWORD, || Identity::from_pkcs12(&bundle.to_der(), PASSWORD))?
+        .map_err(|e| format!("Could not use the client certificate and key: {e}"));
+    #[cfg(windows)]
     Identity::from_pkcs12(&bundle.to_der(), PASSWORD)
         .map_err(|e| format!("Could not use the client certificate and key: {e}"))
+}
+
+/// On macOS native-tls imports the bundle into a temporary keychain it creates on first use and keeps for the
+/// life of the process. macOS deletes temporary files nobody touched for three days, and from then on every
+/// import fails with OSStatus -26276 until the app restarts. So the keychain goes into a folder of this process,
+/// and before each import a missing one is put back: a new keychain with the same password, moved to the old
+/// path, which the one native-tls holds then opens again. Creating it right at the old path is refused, as the
+/// old one is still registered.
+#[cfg(target_os = "macos")]
+mod temp_keychain {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock, PoisonError};
+
+    use security_framework::os::macos::keychain::{CreateOptions, KeychainSettings};
+
+    static FOLDER: OnceLock<Option<PathBuf>> = OnceLock::new();
+    /// The keychain native-tls created, once an import has made it. Held during imports.
+    static KEYCHAIN: Mutex<Option<PathBuf>> = Mutex::new(None);
+    const PREFIX: &str = "sauron-tls-";
+
+    /// Deletes the folders of earlier runs whose process is gone. native-tls removes its keychain, a copy of the
+    /// client key, only on a normal exit, so after a crash or a force quit it would stay until macOS cleans up.
+    pub fn remove_stale(temp: &Path) {
+        let Ok(entries) = std::fs::read_dir(temp) else { return };
+        for entry in entries.flatten() {
+            let pid = entry.file_name().to_str().and_then(|name| name.strip_prefix(PREFIX)?.parse::<libc::pid_t>().ok());
+            let Some(pid) = pid.filter(|pid| u32::try_from(*pid).ok() != Some(std::process::id())) else { continue };
+            // SAFETY: signal 0 only checks whether the process exists; ESRCH means it does not.
+            let gone = unsafe { libc::kill(pid, 0) } == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            if gone {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+
+    pub fn import<T>(password: &str, import: impl FnOnce() -> T) -> Result<T, String> {
+        let folder = FOLDER.get_or_init(|| {
+            let folder = std::env::temp_dir().join(format!("{PREFIX}{}", std::process::id()));
+            tempfile::env::override_temp_dir(&folder).ok()?;
+            Some(folder)
+        });
+        let mut keychain = KEYCHAIN.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(folder) = folder {
+            // native-tls makes its own folder in here on first use, so this one has to be there
+            let _ = std::fs::create_dir_all(folder);
+        }
+        if let Some(path) = keychain.as_deref().filter(|path| !path.exists()) {
+            restore(path, password)?;
+        }
+        let imported = import();
+        if keychain.is_none() {
+            *keychain = folder.as_deref().and_then(find);
+        }
+        Ok(imported)
+    }
+
+    #[cfg(test)]
+    pub fn path() -> Option<PathBuf> {
+        KEYCHAIN.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// The tmp.keychain in the folder native-tls made inside this process's folder.
+    fn find(folder: &Path) -> Option<PathBuf> {
+        std::fs::read_dir(folder)
+            .ok()?
+            .flatten()
+            .map(|entry| entry.path().join("tmp.keychain"))
+            .find(|path| path.exists())
+    }
+
+    /// The same password and settings native-tls creates it with.
+    fn restore(path: &Path, password: &str) -> Result<(), String> {
+        let failed = |e: &dyn std::fmt::Display| format!("Could not recreate the temporary keychain {}: {e}", path.display());
+        let dir = path.parent().ok_or_else(|| failed(&"no folder"))?;
+        std::fs::create_dir_all(dir).map_err(|e| failed(&e))?;
+        let new = dir.join("new.keychain");
+        let _ = std::fs::remove_file(&new);
+        let mut keychain = CreateOptions::new().password(password).create(&new).map_err(|e| failed(&e))?;
+        keychain.set_settings(&KeychainSettings::new()).map_err(|e| failed(&e))?;
+        drop(keychain);
+        std::fs::rename(&new, path).map_err(|e| failed(&e))
+    }
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -659,6 +747,56 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         assert!(!running(), "the background sleep {} outlived the cancelled renewal", pid.trim());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn folders_of_gone_processes_are_removed() {
+        let temp = std::env::temp_dir().join(format!("sauron-stale-test-{}", uuid::Uuid::new_v4()));
+        let mut exited = std::process::Command::new("true").spawn().unwrap();
+        exited.wait().unwrap();
+        let mut running = std::process::Command::new("sleep").arg("5").spawn().unwrap();
+        let folder = |pid: u32| temp.join(format!("sauron-tls-{pid}"));
+        let (gone, alive, own, other) =
+            (folder(exited.id()), folder(running.id()), folder(std::process::id()), temp.join("sauron-tls-x"));
+        for dir in [&gone, &alive, &own, &other] {
+            std::fs::create_dir_all(dir.join(".tmpabc")).unwrap();
+            std::fs::write(dir.join(".tmpabc/tmp.keychain"), "").unwrap();
+        }
+        temp_keychain::remove_stale(&temp);
+        let _ = running.kill();
+        let _ = running.wait();
+        let kept = [&gone, &alive, &own, &other].map(|dir| dir.exists());
+        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(kept, [false, true, true, true]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_cleaned_up_temporary_keychain_is_put_back() {
+        let dir = std::env::temp_dir().join(format!("sauron-keychain-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (key_file, cert_file) = (dir.join("key.pem"), dir.join("cert.pem"));
+        // a throwaway key and certificate, made here so the repository holds none
+        let openssl = |args: &[&std::ffi::OsStr]| {
+            assert!(std::process::Command::new("openssl").args(args).output().unwrap().status.success(), "openssl {args:?}");
+        };
+        openssl(&["ecparam".as_ref(), "-name".as_ref(), "prime256v1".as_ref(), "-genkey".as_ref(), "-noout".as_ref(), "-out".as_ref(), key_file.as_os_str()]);
+        openssl(&[
+            "req".as_ref(), "-new".as_ref(), "-x509".as_ref(), "-key".as_ref(), key_file.as_os_str(),
+            "-subj".as_ref(), "/CN=sauron-test".as_ref(), "-days".as_ref(), "1".as_ref(), "-out".as_ref(), cert_file.as_os_str(),
+        ]);
+        let cert = std::fs::read(&cert_file).unwrap();
+        let key = pkcs8_der(&std::fs::read(&key_file).unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        identity(&cert, &key).unwrap();
+        let keychain = temp_keychain::path().expect("the import should have made a temporary keychain");
+        // what the macOS clean-up of temporary files does to it after three days
+        std::fs::remove_dir_all(keychain.parent().unwrap()).unwrap();
+        identity(&cert, &key).unwrap();
+        assert!(keychain.exists());
+        identity(&cert, &key).unwrap();
     }
 
     #[test]
