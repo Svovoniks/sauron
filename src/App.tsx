@@ -650,10 +650,14 @@ export default function App() {
     });
   };
 
-  const selectQuery = (query: SavedQuery) => {
-    const scope = sidebarScope;
+  /** Open a saved query on the active connection. Scope is where the query is stored (the palette also lists global ones). */
+  const selectQuery = (query: SavedQuery, scope: string | null = sidebarScope) => {
     if (!scope) return;
-    const linked = ws.tabs.find((tab) => tab.savedQueryId === query.id && tab.savedScope === scope);
+    // Reuse a tab that already has this query open only when it is on the active connection:
+    // switching to a tab also switches the connection, so a tab on another one would jump away.
+    const linked = ws.tabs.find(
+      (tab) => tab.savedQueryId === query.id && tab.savedScope === scope && tab.connectionId === (activeConnection?.id ?? null),
+    );
     if (linked) return selectTab(linked.id);
     if (activeTab && !activeTab.sql.trim() && !activeTab.savedQueryId) {
       ws.patchTab(activeTab.id, { savedQueryId: query.id, savedScope: scope, name: query.name });
@@ -870,8 +874,11 @@ export default function App() {
     ws.tabs.forEach((tab) =>
       items.push({ id: `t-${tab.id}`, group: "Tabs", icon: I.file, label: tab.name, sub: tab.sql.replace(/\s+/g, " ").slice(0, 80), mono: true, run: () => selectTab(tab.id) }),
     );
-    [...savedQueries, ...(activeSaveScope === "local" && activeConnection ? itemsOf(data, "queries", GLOBAL_SCOPE) : [])].forEach((query) =>
-      items.push({ id: `q-${query.id}`, group: "Saved queries", icon: I.file, label: query.name, sub: query.query.replace(/\s+/g, " ").slice(0, 90), mono: true, run: () => selectQuery(query) }),
+    [
+      ...savedQueries.map((query) => ({ query, scope: sidebarScope })),
+      ...(activeSaveScope === "local" && activeConnection ? itemsOf(data, "queries", GLOBAL_SCOPE).map((query) => ({ query, scope: GLOBAL_SCOPE })) : []),
+    ].forEach(({ query, scope }) =>
+      items.push({ id: `q-${query.id}`, group: "Saved queries", icon: I.file, label: query.name, sub: query.query.replace(/\s+/g, " ").slice(0, 90), mono: true, run: () => selectQuery(query, scope) }),
     );
     (schemaState.schema?.tables ?? []).slice(0, 2_000).forEach((table) =>
       items.push({
@@ -1114,7 +1121,7 @@ export default function App() {
       onOverwriteResult={overwriteResult}
       onReorderQuery={(from, to) => sidebarScope && appData.moveQuery(sidebarScope, from, to)}
       onReorderResult={(from, to) => sidebarScope && appData.moveResult(sidebarScope, from, to)}
-      onSelectQuery={selectQuery}
+      onSelectQuery={(query) => selectQuery(query)}
       onSelectResult={selectResult}
       onSetMode={setSidebarMode}
       onSetSaveScope={setActiveSaveScope}
