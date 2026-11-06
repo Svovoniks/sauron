@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::cancel::Registry;
-use crate::model::{ConnectionParams, DbType, StatementOutcome};
+use crate::model::{ConnectionParams, DbType, StatementOutcome, TargetSessionAttrs};
 use crate::agent_log::{self, Entry, Table};
 use crate::{clickhouse, meta, postgres, secrets};
 
@@ -321,6 +321,10 @@ impl Server {
                 });
                 if !c.description.trim().is_empty() {
                     entry["description"] = json!(c.description.trim());
+                }
+                // host may be a comma separated list of cluster nodes; this says which node is used
+                if c.params.db_type == DbType::Postgres && c.params.target_session_attrs != TargetSessionAttrs::Any {
+                    entry["target_session_attrs"] = json!(c.params.target_session_attrs.libpq_name());
                 }
                 entry
             })
@@ -676,6 +680,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn host_lists_and_target_session_are_listed() {
+        let s = server(false);
+        std::fs::create_dir_all(&s.data_dir).unwrap();
+        let file = json!({ "version": 1, "connections": [
+            { "id": "c1", "name": "Cluster", "host": "a,b,c", "port": "6433", "username": "u", "database": "d",
+              "db_type": "postgres", "target_session_attrs": "read-write" },
+            { "id": "c2", "name": "Old", "host": "h", "port": "5432", "username": "u", "database": "d", "db_type": "postgres" },
+        ] });
+        std::fs::write(s.data_dir.join("connections.json"), file.to_string()).unwrap();
+        let list: Value = serde_json::from_str(&s.list_connections().await.unwrap()).unwrap();
+        assert_eq!(list[0]["host"], "a,b,c");
+        assert_eq!(list[0]["target_session_attrs"], "read-write");
+        assert_eq!(list[1]["name"], "Old");
+        assert!(list[1].get("target_session_attrs").is_none());
+        let _ = std::fs::remove_dir_all(&s.data_dir);
     }
 
     #[tokio::test]

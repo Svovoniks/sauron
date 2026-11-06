@@ -1,9 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { parseConnectionUrl } from "../lib/connUrl";
+import { parseConnectionUrl, splitHosts } from "../lib/connUrl";
 import { testConnection } from "../lib/db/query";
-import { defaultPort, ENV_LABEL, type Connection, type ConnectionDraft, type DbType, type Env, type SslMode, type TestReport } from "../types/app";
-import { CheckIcon, EyeIcon, EyeOffIcon, FileIcon, LinkIcon, WarningIcon } from "./icons";
+import { defaultPort, ENV_LABEL, type Connection, type ConnectionDraft, type DbType, type Env, type SslMode, type TargetSessionAttrs, type TestReport } from "../types/app";
+import { expandPastedHosts, fromHostRows, toHostRows, type HostRow } from "../lib/hostList";
+import { CheckIcon, CloseIcon, EyeIcon, EyeOffIcon, FileIcon, LinkIcon, PlusIcon, WarningIcon } from "./icons";
 import { Modal } from "./Modal";
 
 interface ConnectionModalProps {
@@ -47,6 +48,12 @@ const SSL_HINT: Record<SslMode, string> = {
   verify: "Encrypted, and the certificate and host name are verified. Recommended for remote servers.",
 };
 
+const TARGET_OPTIONS: { value: TargetSessionAttrs; label: string; hint: string }[] = [
+  { value: "any", label: "Any node", hint: "The first host that answers, primary or replica." },
+  { value: "read-write", label: "Primary (read-write)", hint: "The first host that accepts writes. Skips replicas, so writes keep working after a failover." },
+  { value: "read-only", label: "Replica (read-only)", hint: "The first host that only allows reads. Keeps queries off the primary." },
+];
+
 type CertField = "ssl_root_cert" | "ssl_cert" | "ssl_key";
 type DefaultCerts = Record<CertField, string>;
 
@@ -59,10 +66,27 @@ const CERT_FIELDS: { field: CertField; label: string; placeholder: string }[] = 
 const TIMEOUTS = [15, 30, 60, 300, 900, 0];
 const timeoutLabel = (secs: number) => (secs === 0 ? "none" : secs >= 60 && secs % 60 === 0 ? `${secs / 60} min` : `${secs} s`);
 
+const validPort = (text: string) => /^\d+$/.test(text) && Number(text) >= 1 && Number(text) <= 65535;
+
+/** Postgres takes libpq's lists: several hosts, and one port for all of them or one port per host. */
+function validateAddress(draft: ConnectionDraft): string | null {
+  if (draft.db_type !== "postgres") {
+    if (!draft.host.trim()) return "Host is required.";
+    if (draft.host.includes(",")) return "Several hosts are only supported for Postgres.";
+    return validPort(draft.port.trim()) ? null : "Port must be a number from 1 to 65535.";
+  }
+  const hosts = splitHosts(draft.host);
+  if (hosts.length === 0) return "Host is required.";
+  const ports = draft.port.split(",").map((p) => p.trim());
+  if (ports.length === 1) return validPort(ports[0]) ? null : "Port must be a number from 1 to 65535.";
+  if (!ports.every(validPort)) return "Each port must be a number from 1 to 65535.";
+  if (ports.length !== hosts.length) return `${ports.length} ports for ${hosts.length} hosts: give one port for all hosts, or one port per host.`;
+  return null;
+}
+
 function validate(draft: ConnectionDraft, defaultCerts: DefaultCerts): string | null {
-  if (!draft.host.trim()) return "Host is required.";
-  const port = Number(draft.port);
-  if (!/^\d+$/.test(draft.port.trim()) || port < 1 || port > 65535) return "Port must be a number from 1 to 65535.";
+  const address = validateAddress(draft);
+  if (address) return address;
   if (!Number.isInteger(draft.timeout_secs) || draft.timeout_secs < 0) return "Timeout must be 0 or a positive number.";
   if (draft.db_type !== "postgres") return null;
   const certs = draft.use_default_certs ? defaultCerts : draft;
@@ -75,6 +99,11 @@ function validate(draft: ConnectionDraft, defaultCerts: DefaultCerts): string | 
 
 const ENV_CHOICES: Env[] = ["local", "staging", "prod"];
 
+/** A host row plus a stable React key, so removing a row in the middle keeps focus and values in place. */
+type KeyedRow = HostRow & { key: number };
+let nextRowKey = 0;
+const keyed = (rows: HostRow[]): KeyedRow[] => rows.map((row) => ({ ...row, key: nextRowKey++ }));
+
 export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl, onClose, onSave, onTested, loadSavedPassword, defaultCerts }: ConnectionModalProps) {
   const [draft, setDraft] = useState<ConnectionDraft>(initial);
   const [showPassword, setShowPassword] = useState(false);
@@ -84,6 +113,9 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
   const [urlState, setUrlState] = useState<"" | "ok" | "bad">("");
   const [certsOpen, setCertsOpen] = useState(() => initial.use_default_certs || CERT_FIELDS.some(({ field }) => initial[field] !== ""));
   const [test, setTest] = useState<{ running: boolean; report: TestReport | null; error: string | null }>({ running: false, report: null, error: null });
+  const [rows, setRows] = useState<KeyedRow[]>(() => keyed(toHostRows(initial.host, initial.port)));
+  const [focusRow, setFocusRow] = useState<number | null>(null);
+  const hostRefs = useRef(new Map<number, HTMLInputElement>());
   const urlRef = useRef<HTMLInputElement | null>(null);
   const tempId = useRef(`test-${crypto.randomUUID()}`);
 
@@ -91,16 +123,53 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
     if (focusUrl) urlRef.current?.focus();
   }, [focusUrl]);
 
+  useEffect(() => {
+    if (focusRow === null) return;
+    hostRefs.current.get(focusRow)?.focus();
+    setFocusRow(null);
+  }, [focusRow]);
+
   const patch = (changes: Partial<ConnectionDraft>) => {
     setDraft((current) => ({ ...current, ...changes }));
     setTest((t) => (t.report || t.error ? { running: false, report: null, error: null } : t));
   };
 
+  /** Rows are what the form shows; the draft keeps the saved shape (comma lists). */
+  const updateRows = (next: KeyedRow[]) => {
+    setRows(next);
+    patch(fromHostRows(next));
+  };
+
+  const changeHost = (index: number, value: string) => {
+    if (!value.includes(",")) return updateRows(rows.map((row, i) => (i === index ? { ...row, host: value } : row)));
+    // A pasted or typed list becomes one row per host; a trailing comma starts a new empty row.
+    const expanded = expandPastedHosts(rows, index, value);
+    const added = expanded.length - rows.length + 1;
+    const next = [...rows.slice(0, index), ...keyed(expanded.slice(index, index + added)), ...rows.slice(index + 1)];
+    if (value.trimEnd().endsWith(",")) {
+      const empty = keyed([{ host: "", port: rows[index].port }])[0];
+      next.splice(index + added, 0, empty);
+      setFocusRow(empty.key);
+    }
+    updateRows(next);
+  };
+
+  const addRow = () => {
+    const row = keyed([{ host: "", port: rows[rows.length - 1]?.port ?? defaultPort(draft.db_type) }])[0];
+    updateRows([...rows, row]);
+    setFocusRow(row.key);
+  };
+
+  const removeRow = (index: number) => updateRows(rows.filter((_, i) => i !== index));
+
   const changeDbType = (dbType: DbType) => {
     if (dbType === draft.db_type) return;
+    const swapPort = (port: string) => (port.trim() === "" || port === defaultPort(draft.db_type) ? defaultPort(dbType) : port);
+    const next = rows.map((row) => ({ ...row, port: swapPort(row.port) }));
+    setRows(next);
     patch({
       db_type: dbType,
-      port: draft.port.trim() === "" || draft.port === defaultPort(draft.db_type) ? defaultPort(dbType) : draft.port,
+      ...fromHostRows(next),
       ssl_mode: SSL_OPTIONS[dbType].some((option) => option.value === draft.ssl_mode) ? draft.ssl_mode : "require",
     });
   };
@@ -112,6 +181,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
     if (!parsed) return setUrlState("bad");
     setUrlState("ok");
     const { name, ...rest } = parsed;
+    if (rest.host !== undefined) setRows(keyed(toHostRows(rest.host, rest.port ?? draft.port)));
     patch({ ...rest, name: draft.name.trim() ? draft.name : (name ?? "") });
   };
 
@@ -143,6 +213,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
       ssl_cert: draft.ssl_cert.trim(),
       ssl_key: draft.ssl_key.trim(),
       use_default_certs: draft.use_default_certs,
+      target_session_attrs: draft.target_session_attrs,
     };
     try {
       const report = await testConnection(connection, draft.password);
@@ -221,16 +292,65 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
           />
           <p className="field-hint">Shown to AI agents that list your connections over MCP, so they know which one to use.</p>
         </div>
-        <div className="host-port-group">
-          <div className="form-group">
-            <label htmlFor="host">Host</label>
-            <input autoCorrect="off" id="host" onChange={(event) => patch({ host: event.target.value })} placeholder="db.example.internal" type="text" value={draft.host} />
-          </div>
-          <div className="form-group">
+        <div className={`form-group host-list ${rows.length > 1 ? "multi" : ""}`}>
+          <div className="host-row host-row-head">
+            <label htmlFor="host">{rows.length > 1 ? "Hosts" : "Host"}</label>
             <label htmlFor="port">Port</label>
-            <input autoCorrect="off" id="port" inputMode="numeric" onChange={(event) => patch({ port: event.target.value })} placeholder={defaultPort(draft.db_type)} type="text" value={draft.port} />
           </div>
+          {rows.map((row, index) => (
+            <div className="host-row" key={row.key}>
+              <input
+                aria-label={rows.length > 1 ? `Host ${index + 1}` : undefined}
+                autoCorrect="off"
+                id={index === 0 ? "host" : undefined}
+                onChange={(event) => changeHost(index, event.target.value)}
+                placeholder={index === 0 ? "db.example.internal" : "another node of the cluster"}
+                ref={(element) => {
+                  if (element) hostRefs.current.set(row.key, element);
+                  else hostRefs.current.delete(row.key);
+                }}
+                spellCheck={false}
+                type="text"
+                value={row.host}
+              />
+              <input
+                aria-label={rows.length > 1 ? `Port of host ${index + 1}` : undefined}
+                autoCorrect="off"
+                id={index === 0 ? "port" : undefined}
+                inputMode="numeric"
+                onChange={(event) => updateRows(rows.map((r, i) => (i === index ? { ...r, port: event.target.value } : r)))}
+                placeholder={defaultPort(draft.db_type)}
+                type="text"
+                value={row.port}
+              />
+              {rows.length > 1 ? (
+                <button aria-label={`Remove host ${index + 1}`} className="host-remove" onClick={() => removeRow(index)} title="Remove this host" type="button">
+                  <CloseIcon />
+                </button>
+              ) : null}
+            </div>
+          ))}
+          {draft.db_type === "postgres" ? (
+            <button className="host-add" onClick={addRow} type="button">
+              <PlusIcon size={13} />
+              {rows.length > 1 ? "Add host" : "Add host (replica or another cluster node)"}
+            </button>
+          ) : null}
+          {draft.db_type === "postgres" && rows.length > 1 ? <p className="field-hint">Tried from top to bottom. Target session decides which one is kept.</p> : null}
         </div>
+        {draft.db_type === "postgres" ? (
+          <div className="form-group">
+            <label htmlFor="target-session">Target session</label>
+            <select id="target-session" onChange={(event) => patch({ target_session_attrs: event.target.value as TargetSessionAttrs })} value={draft.target_session_attrs}>
+              {TARGET_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="field-hint">{TARGET_OPTIONS.find((option) => option.value === draft.target_session_attrs)?.hint}</p>
+          </div>
+        ) : null}
         <div className="host-port-group">
           <div className="form-group">
             <label htmlFor="database">Database</label>

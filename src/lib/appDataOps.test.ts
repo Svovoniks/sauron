@@ -31,6 +31,7 @@ const conn = (id: string): Connection => ({
   ssl_cert: "",
   ssl_key: "",
   use_default_certs: false,
+  target_session_attrs: "any",
 });
 const query = (id: string) => ({ id, name: id, query: `select '${id}'` });
 

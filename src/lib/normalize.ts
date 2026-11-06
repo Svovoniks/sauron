@@ -9,6 +9,8 @@ import {
   type SavedQuery,
   type SavedResult,
   type SslMode,
+  TARGET_SESSION_ATTRS,
+  type TargetSessionAttrs,
 } from "../types/app";
 
 /**
@@ -28,6 +30,7 @@ const SSL_MODES: readonly string[] = ["disable", "prefer", "require", "verify-ca
 
 const isDbType = (v: unknown): v is DbType => typeof v === "string" && DB_TYPES.includes(v);
 const isSslMode = (v: unknown): v is SslMode => typeof v === "string" && SSL_MODES.includes(v);
+const isTargetSessionAttrs = (v: unknown): v is TargetSessionAttrs => typeof v === "string" && (TARGET_SESSION_ATTRS as readonly string[]).includes(v);
 
 const SCHEME = /^https?:\/\//i;
 
@@ -77,6 +80,7 @@ export function normalizeConnection(raw: unknown): { connection: Connection; leg
     ssl_cert: str(raw.ssl_cert).trim(),
     ssl_key: str(raw.ssl_key).trim(),
     use_default_certs: raw.use_default_certs === true,
+    target_session_attrs: isTargetSessionAttrs(raw.target_session_attrs) ? raw.target_session_attrs : "any",
   };
 
   const legacyPassword = typeof raw.password === "string" && raw.password !== "" ? raw.password : null;

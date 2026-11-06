@@ -7,7 +7,9 @@ use tokio_postgres::{Client, Config, SimpleQueryMessage, SimpleQueryRow};
 
 use crate::cancel::{Guard, Killer};
 use crate::client_cert;
-use crate::model::{ColumnMeta, ConnectionParams, QueryResult, SslMode, StatementError, StatementOutcome, CANCELLED};
+use crate::model::{
+    ColumnMeta, ConnectionParams, QueryResult, SslMode, StatementError, StatementOutcome, TargetSessionAttrs, CANCELLED,
+};
 
 const CURSOR_NAME: &str = "sauron_cursor";
 
@@ -32,9 +34,21 @@ pub fn tls_connector(conn: &ConnectionParams) -> Result<MakeTlsConnector, String
 
 pub fn build_config(conn: &ConnectionParams, password: &str) -> Result<Config, String> {
     let mut cfg = Config::new();
-    cfg.host(conn.host_trimmed()?)
-        .port(conn.port_number()?)
-        .application_name("sauron")
+    // Several hosts work like libpq: tried in order, the first that accepts the connection and
+    // matches target_session_attrs wins. TLS checks each host against its own name.
+    let hosts = conn.pg_hosts()?;
+    for host in &hosts.hosts {
+        cfg.host(*host);
+    }
+    for port in &hosts.ports {
+        cfg.port(*port);
+    }
+    cfg.target_session_attrs(match conn.target_session_attrs {
+        TargetSessionAttrs::Any => tokio_postgres::config::TargetSessionAttrs::Any,
+        TargetSessionAttrs::ReadWrite => tokio_postgres::config::TargetSessionAttrs::ReadWrite,
+        TargetSessionAttrs::ReadOnly => tokio_postgres::config::TargetSessionAttrs::ReadOnly,
+    });
+    cfg.application_name("sauron")
         .connect_timeout(Duration::from_secs(10))
         .keepalives(true);
     if !conn.username.trim().is_empty() {
@@ -87,23 +101,10 @@ pub async fn connect_session(
     password: &str,
     guard: &Guard<'_>,
 ) -> Result<Client, String> {
-    let mut cfg = build_config(conn, password)?;
+    // A bad host or port is reported before a certificate renewal is started for nothing.
+    build_config(conn, password)?;
     client_cert::renew_if_expired(conn).await?;
-    let tls = tls_connector(conn)?;
-
-    let (client, connection) = match cfg.connect(tls.clone()).await {
-        Ok(connected) => connected,
-        // libpq's `prefer` also retries without TLS when the server offers it but the handshake then fails
-        // (old TLS version, a proxy that accepts SSL but cannot finish it); tokio-postgres only falls back on a plain "no".
-        Err(e) if conn.ssl_mode == SslMode::Prefer && tls_attempt_failed(&e) => {
-            cfg.ssl_mode(tokio_postgres::config::SslMode::Disable);
-            cfg.connect(tls.clone()).await.map_err(describe_error)?
-        }
-        Err(e) => return Err(describe_error(e)),
-    };
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+    let (client, tls) = open_client(conn, password).await?;
     guard.set_killer(Killer::Postgres {
         token: client.cancel_token(),
         tls,
@@ -123,6 +124,31 @@ pub async fn connect_session(
         client.batch_execute(&setup).await.map_err(describe_error)?;
     }
     Ok(client)
+}
+
+/// Log in with the connection's address, TLS and certificate settings, nothing else: no certificate
+/// renewal, no cancel registration and none of the session settings (the connection test uses it to
+/// look at each host of a list on its own).
+pub async fn open_client(conn: &ConnectionParams, password: &str) -> Result<(Client, MakeTlsConnector), String> {
+    let mut cfg = build_config(conn, password)?;
+    let tls = tls_connector(conn)?;
+
+    let (client, connection) = match cfg.connect(tls.clone()).await {
+        Ok(connected) => connected,
+        // libpq's prefer mode also retries without TLS when the server offers it but the handshake then fails
+        // (old TLS version, a proxy that accepts SSL but cannot finish it); tokio-postgres only falls back on a plain "no".
+        Err(e) if conn.ssl_mode == SslMode::Prefer && tls_attempt_failed(&e) => {
+            cfg.ssl_mode(tokio_postgres::config::SslMode::Disable);
+            cfg.connect(tls.clone())
+                .await
+                .map_err(|e| describe_connect_error(e, &cfg, conn.target_session_attrs))?
+        }
+        Err(e) => return Err(describe_connect_error(e, &cfg, conn.target_session_attrs)),
+    };
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    Ok((client, tls))
 }
 
 /// Run one row-returning statement and return all of it (no row limit; for small catalog queries).
@@ -451,6 +477,21 @@ fn describe_error(error: tokio_postgres::Error) -> String {
     describe_error_ro(error, false)
 }
 
+/// tokio-postgres only returns the error of the last host it tried, so with several hosts say that
+/// none of them was accepted.
+fn describe_connect_error(error: tokio_postgres::Error, cfg: &Config, target: TargetSessionAttrs) -> String {
+    let message = describe_error(error);
+    let count = cfg.get_hosts().len();
+    if count < 2 {
+        return message;
+    }
+    let wanted = match target {
+        TargetSessionAttrs::Any => String::new(),
+        other => format!(" as a {} session", other.libpq_name()),
+    };
+    format!("None of the {count} hosts accepted the connection{wanted}. Last error: {message}")
+}
+
 fn describe_error_ro(error: tokio_postgres::Error, read_only: bool) -> String {
     let Some(db) = error.as_db_error() else {
         // Connection level problems: surface the whole chain, not just "error connecting to server".
@@ -475,8 +516,12 @@ fn describe_error_ro(error: tokio_postgres::Error, read_only: bool) -> String {
     if let Some(hint) = db.hint() {
         message.push_str(&format!("\nHINT: {hint}"));
     }
-    if read_only && *db.code() == SqlState::READ_ONLY_SQL_TRANSACTION {
-        message.push_str("\n\nThis connection is read-only. Edit the connection to allow writes.");
+    if *db.code() == SqlState::READ_ONLY_SQL_TRANSACTION {
+        message.push_str(if read_only {
+            "\n\nThis connection is read-only. Edit the connection to allow writes."
+        } else {
+            "\n\nIf the server is a replica: list every node of the cluster in Host (comma separated) and set Target session to read-write."
+        });
     }
     message
 }
@@ -555,6 +600,69 @@ mod tests {
         assert_eq!(normalize_text_value(&Type::BOOL, "t"), "true");
         assert_eq!(normalize_text_value(&Type::BOOL, "f"), "false");
         assert_eq!(normalize_text_value(&Type::TEXT, "t"), "t");
+    }
+
+    fn params(host: &str, port: &str, target: &str) -> ConnectionParams {
+        serde_json::from_value(serde_json::json!({
+            "id": "t", "host": host, "port": port, "username": "u", "database": "d",
+            "db_type": "postgres", "ssl_mode": "verify", "target_session_attrs": target,
+        }))
+        .unwrap()
+    }
+
+    fn tcp_hosts(cfg: &Config) -> Vec<String> {
+        cfg.get_hosts()
+            .iter()
+            .map(|h| match h {
+                tokio_postgres::config::Host::Tcp(name) => name.clone(),
+                #[cfg(unix)]
+                tokio_postgres::config::Host::Unix(path) => path.display().to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn build_config_takes_every_host_and_the_target_session() {
+        use tokio_postgres::config::TargetSessionAttrs as Driver;
+        let cfg = build_config(
+            &params(
+                "pg-node1.staging.example.com, pg-node2.staging.example.com,pg-node3.staging.example.com",
+                "6433",
+                "read-write",
+            ),
+            "",
+        )
+        .unwrap();
+        assert_eq!(
+            tcp_hosts(&cfg),
+            [
+                "pg-node1.staging.example.com",
+                "pg-node2.staging.example.com",
+                "pg-node3.staging.example.com"
+            ]
+        );
+        assert_eq!(cfg.get_ports(), [6433]);
+        assert_eq!(cfg.get_target_session_attrs(), Driver::ReadWrite);
+
+        let cfg = build_config(&params("a,b", "1,2", "read-only"), "").unwrap();
+        assert_eq!(cfg.get_ports(), [1, 2]);
+        assert_eq!(cfg.get_target_session_attrs(), Driver::ReadOnly);
+
+        assert!(build_config(&params("a,b,c", "1,2", "any"), "").is_err());
+    }
+
+    #[test]
+    fn build_config_single_host_is_unchanged() {
+        let c: ConnectionParams = serde_json::from_value(serde_json::json!({
+            "id": "t", "host": " db.local ", "port": "5432", "username": "u", "database": "d", "db_type": "postgres",
+        }))
+        .unwrap();
+        let cfg = build_config(&c, "pw").unwrap();
+        assert_eq!(tcp_hosts(&cfg), ["db.local"]);
+        assert_eq!(cfg.get_ports(), [5432]);
+        assert_eq!(cfg.get_target_session_attrs(), tokio_postgres::config::TargetSessionAttrs::Any);
+        assert_eq!(cfg.get_user(), Some("u"));
+        assert_eq!(cfg.get_dbname(), Some("d"));
     }
 
     #[test]
@@ -665,7 +773,7 @@ mod integration_tests {
         let report = crate::test_connection::run(&c, "", &guard).await;
         assert!(report.ok, "{:?}", report.steps);
         let names: Vec<_> = report.steps.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["Resolve host", "Open TCP connection", "Encrypt and log in", "Server version", "Read-only mode"]);
+        assert_eq!(names, ["Resolve host", "Open TCP connection", "Encrypt and log in", "Server version", "Server role", "Read-only mode"]);
         assert!(report.server_version.unwrap().starts_with("PostgreSQL"));
 
         let mut bad = c.clone();
@@ -819,6 +927,68 @@ mod integration_tests {
         assert!(!err.is_empty());
         // the server insists on a client certificate
         assert!(run(&conn("verify-ca", false), &sql, 1).await.is_err());
+    }
+
+    /// A host list over a primary and a streaming replica. Skipped unless SAURON_TEST_PG_PRIMARY_PORT and
+    /// SAURON_TEST_PG_REPLICA_PORT are set (both on 127.0.0.1, plain text).
+    #[tokio::test]
+    async fn host_list_lands_on_the_node_the_target_session_asks_for() {
+        let (Ok(primary), Ok(replica)) = (std::env::var("SAURON_TEST_PG_PRIMARY_PORT"), std::env::var("SAURON_TEST_PG_REPLICA_PORT")) else {
+            return;
+        };
+        let closed = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port().to_string()
+        };
+        let conn = |ports: &[&str], target: &str| -> ConnectionParams {
+            serde_json::from_value(serde_json::json!({
+                "id": "test", "host": vec!["127.0.0.1"; ports.len()].join(","), "port": ports.join(","),
+                "username": std::env::var("SAURON_TEST_PG_USER").unwrap_or_else(|_| "sauron".into()),
+                "database": "postgres", "db_type": "postgres", "ssl_mode": "disable", "target_session_attrs": target,
+            }))
+            .unwrap()
+        };
+        let sql = ["select pg_is_in_recovery()::text, inet_server_port()::text"];
+        let landed = |r: QueryResult| (r.rows[0][0].clone().unwrap(), r.rows[0][1].clone().unwrap());
+
+        // read-write skips the replica listed first, and a dead host before it
+        let rw = conn(&[&closed, &replica, &primary], "read-write");
+        assert_eq!(landed(run(&rw, &sql, 1).await.unwrap()), ("false".to_string(), primary.clone()));
+        let out = run(&rw, &["create temp table w(a int)", "insert into w values (1)"], 1).await.unwrap();
+        assert_eq!(out.message.as_deref(), Some("1 row affected"));
+
+        // read-only skips the primary; any keeps the first host that answers, as before
+        let ro = conn(&[&primary, &replica], "read-only");
+        assert_eq!(landed(run(&ro, &sql, 1).await.unwrap()), ("true".to_string(), replica.clone()));
+        let any = conn(&[&replica, &primary], "any");
+        assert_eq!(landed(run(&any, &sql, 1).await.unwrap()), ("true".to_string(), replica.clone()));
+        let err = run(&any, &["create temp table nope(a int)"], 1).await.unwrap_err();
+        assert!(err.contains("read-only transaction") && err.contains("Target session to read-write"), "{err}");
+
+        // no node matches: the error says so instead of only showing the last host's complaint
+        let err = run(&conn(&[&replica, &replica], "read-write"), &sql, 1).await.unwrap_err();
+        assert!(err.starts_with("None of the 2 hosts accepted the connection as a read-write session"), "{err}");
+
+        // the connection test looks at every host and names the one that was picked
+        let registry = Registry::default();
+        let guard = registry.begin();
+        let report = crate::test_connection::run(&rw, "", &guard).await;
+        assert!(report.ok, "{:?}", report.steps);
+        let step = |name: &str| report.steps.iter().find(|s| s.name == name).unwrap_or_else(|| panic!("{name}: {:?}", report.steps));
+        assert!(!step(&format!("Host 127.0.0.1:{closed}")).ok);
+        assert!(step(&format!("Host 127.0.0.1:{replica}")).detail.contains("replica"));
+        assert!(step(&format!("Host 127.0.0.1:{primary}")).detail.contains("primary (read-write)"));
+        assert_eq!(step("Pick host").detail, format!("127.0.0.1:{primary} (the first host that accepts writes)"));
+        assert_eq!(step("Server role").detail, format!("primary at 127.0.0.1:{primary}"));
+
+        let report = crate::test_connection::run(&any, "", &guard).await;
+        assert!(report.ok);
+        let role = report.steps.iter().find(|s| s.name == "Server role").unwrap();
+        assert!(!role.ok && role.detail.contains("writes will fail"), "{role:?}");
+
+        let report = crate::test_connection::run(&conn(&[&replica, &closed], "read-write"), "", &guard).await;
+        assert!(!report.ok);
+        assert_eq!(report.steps.last().unwrap().name, "Pick host");
     }
 
     #[tokio::test]

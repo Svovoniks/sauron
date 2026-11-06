@@ -451,3 +451,71 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Host list: one row per node (host, port, remove), then the add button. */
+.host-list {
+  gap: 8px;
+}
+
+.host-row {
+  display: grid;
+  grid-template-columns: 3fr 1fr;
+  gap: 8px 16px;
+  align-items: center;
+}
+
+.host-list.multi .host-row {
+  grid-template-columns: 3fr 1fr 28px;
+}
+
+.host-row-head {
+  margin-bottom: -2px;
+}
+
+.host-row input {
+  min-width: 0;
+}
+
+.host-remove {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: calc(6px * var(--rs));
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.host-remove:hover {
+  color: var(--text-strong);
+  background: var(--hover-strong);
+}
+
+.host-remove:focus-visible,
+.host-add:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 2px;
+}
+
+.host-add {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 6px 12px;
+  background: none;
+  border: 1px dashed var(--line-strong);
+  border-radius: calc(8px * var(--rs));
+  color: var(--dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.host-add:hover {
+  color: var(--text-strong);
+  border-color: var(--accent);
+}

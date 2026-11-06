@@ -9,6 +9,15 @@ export type DbType = "postgres" | "clickhouse";
  */
 export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify";
 
+/**
+ * Postgres only, libpq's target_session_attrs: which node of a multi-host list to keep.
+ * any: the first host that accepts the connection (primary or replica)
+ * read-write: the first host that accepts writes (the primary)
+ * read-only: the first host that only allows reads (a replica)
+ */
+export type TargetSessionAttrs = "any" | "read-write" | "read-only";
+export const TARGET_SESSION_ATTRS: readonly TargetSessionAttrs[] = ["any", "read-write", "read-only"];
+
 /** What a connection is used for; "prod" turns on the production guard and the red markers. */
 export type Env = "" | "local" | "staging" | "prod";
 export const ENVS: readonly Env[] = ["", "local", "staging", "prod"];
@@ -18,7 +27,9 @@ export const ENV_LABEL: Record<Env, string> = { "": "none", local: "local", stag
 export interface Connection {
   id: string;
   name: string;
+  /** Postgres: one host or a comma separated list of cluster nodes, tried in order. */
   host: string;
+  /** One port for every host, or (Postgres) a comma separated list with one port per host. */
   port: string;
   username: string;
   database: string;
@@ -36,6 +47,8 @@ export interface Connection {
   ssl_key: string;
   /** Use the default certificate files from Settings instead of the three above. */
   use_default_certs: boolean;
+  /** Postgres only; "any" for connections saved before multi-host support. */
+  target_session_attrs: TargetSessionAttrs;
 }
 
 /** Connection being edited in the modal: `password === ""` on an existing connection means "unchanged". */
@@ -156,6 +169,7 @@ export const emptyDraft = (defaults: Partial<DraftDefaults> = {}): ConnectionDra
   ssl_cert: "",
   ssl_key: "",
   use_default_certs: defaults.useDefaultCerts ?? false,
+  target_session_attrs: "any",
   password: "",
 });
 

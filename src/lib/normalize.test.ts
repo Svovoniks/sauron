@@ -29,6 +29,7 @@ const fullConn: Connection = {
   ssl_cert: "",
   ssl_key: "",
   use_default_certs: false,
+  target_session_attrs: "any",
 };
 
 describe("normalizeConnection", () => {
@@ -140,6 +141,14 @@ describe("normalizeConnection", () => {
       expect(c).toMatchObject({ ssl_mode: "verify-ca", ssl_root_cert: "~/c/root.pem", ssl_cert: "/c/cert.pem", ssl_key: "", use_default_certs: false });
       expect(normalizeConnection({ use_default_certs: true })!.connection.use_default_certs).toBe(true);
       expect(normalizeConnection({ use_default_certs: "yes" })!.connection.use_default_certs).toBe(false);
+    });
+
+    test("target session: libpq names kept, anything else (or nothing, on old saves) is any", () => {
+      expect(normalizeConnection({ host: "a,b", target_session_attrs: "read-write" })!.connection).toMatchObject({ host: "a,b", target_session_attrs: "read-write" });
+      expect(normalizeConnection({ target_session_attrs: "read-only" })!.connection.target_session_attrs).toBe("read-only");
+      expect(normalizeConnection({ target_session_attrs: "primary" })!.connection.target_session_attrs).toBe("any");
+      expect(normalizeConnection({ target_session_attrs: 1 })!.connection.target_session_attrs).toBe("any");
+      expect(normalizeConnection({ host: "h" })!.connection.target_session_attrs).toBe("any");
     });
 
     test("explicit ssl_mode wins over host scheme", () => {
@@ -628,6 +637,7 @@ describe("normalizeBackup", () => {
       ssl_cert: "",
       ssl_key: "",
       use_default_certs: false,
+      target_session_attrs: "any",
     });
     expect(b.results.ch![0]!.rows).toEqual([[null, '{"c":1}']]);
   });

@@ -12,7 +12,7 @@ use tokio::process::Command;
 
 use crate::cancel::Guard;
 use crate::client_cert;
-use crate::model::{ConnectionParams, SslMode};
+use crate::model::{ConnectionParams, SslMode, TargetSessionAttrs};
 
 pub enum PsqlError {
     /// No usable `psql` binary was found; the caller may fall back to the built-in commands.
@@ -62,7 +62,7 @@ async fn run_with_binary(
     password: &str,
     command_text: &str,
 ) -> Result<String, PsqlError> {
-    let host = conn.host_trimmed().map_err(PsqlError::Failed)?;
+    let (host, port) = libpq_host_and_port(conn).map_err(PsqlError::Failed)?;
     let mut command = Command::new(psql_path);
     command
         .arg("-X")
@@ -72,7 +72,7 @@ async fn run_with_binary(
         .arg("-h")
         .arg(host)
         .arg("-p")
-        .arg(conn.port.trim())
+        .arg(port)
         .arg("-U")
         .arg(conn.username.trim())
         .arg("-d")
@@ -105,6 +105,11 @@ async fn run_with_binary(
         if !path.is_empty() {
             command.env(var, client_cert::expand(path));
         }
+    }
+
+    // Only set when needed: psql older than 10 does not know the variable, and older than 14 only knows any and read-write.
+    if conn.target_session_attrs != TargetSessionAttrs::Any {
+        command.env("PGTARGETSESSIONATTRS", conn.target_session_attrs.libpq_name());
     }
 
     // The connection's own settings still apply (a script can switch them off again).
@@ -162,6 +167,14 @@ async fn run_with_binary(
     }))
 }
 
+/// The -h and -p values: libpq takes comma separated lists itself, so the hosts are only cleaned up
+/// (trimmed, blanks dropped) and the ports checked the same way the driver checks them.
+fn libpq_host_and_port(conn: &ConnectionParams) -> Result<(String, String), String> {
+    let hosts = conn.pg_hosts()?;
+    let ports: Vec<String> = hosts.ports.iter().map(u16::to_string).collect();
+    Ok((hosts.hosts.join(","), ports.join(",")))
+}
+
 /// `custom_path`: the binary chosen in Settings. When set it is the only one tried.
 pub async fn execute(
     conn: &ConnectionParams,
@@ -194,6 +207,25 @@ pub async fn execute(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosts_and_ports_are_passed_as_libpq_lists() {
+        let conn = |host: &str, port: &str| -> ConnectionParams {
+            serde_json::from_value(serde_json::json!({
+                "id": "t", "host": host, "port": port, "username": "u", "database": "d", "db_type": "postgres",
+            }))
+            .unwrap()
+        };
+        assert_eq!(libpq_host_and_port(&conn(" h ", " 5432")).unwrap(), ("h".to_string(), "5432".to_string()));
+        assert_eq!(libpq_host_and_port(&conn("a, b,c", "6433")).unwrap(), ("a,b,c".to_string(), "6433".to_string()));
+        assert_eq!(libpq_host_and_port(&conn("a,b", "1, 2")).unwrap(), ("a,b".to_string(), "1,2".to_string()));
+        assert!(libpq_host_and_port(&conn("a,b", "1,2,3")).is_err());
+    }
+}
+
 /// Needs a real server and a `psql` binary: skipped unless `SAURON_TEST_PG_PORT` is set.
 #[cfg(test)]
 mod integration_tests {
@@ -220,6 +252,27 @@ mod integration_tests {
             Ok(out) => Ok(out),
             Err(PsqlError::Failed(m)) | Err(PsqlError::NotInstalled(m)) => Err(m),
         }
+    }
+
+    /// Skipped unless SAURON_TEST_PG_PRIMARY_PORT and SAURON_TEST_PG_REPLICA_PORT are set (see postgres.rs).
+    #[tokio::test]
+    async fn psql_gets_the_host_list_and_target_session() {
+        let (Ok(primary), Ok(replica)) = (std::env::var("SAURON_TEST_PG_PRIMARY_PORT"), std::env::var("SAURON_TEST_PG_REPLICA_PORT")) else {
+            return;
+        };
+        let c = |target: &str| -> ConnectionParams {
+            serde_json::from_value(serde_json::json!({
+                "id": "test", "host": "127.0.0.1, 127.0.0.1", "port": format!("{replica},{primary}"),
+                "username": std::env::var("SAURON_TEST_PG_USER").unwrap_or_else(|_| "sauron".into()),
+                "database": "postgres", "db_type": "postgres", "ssl_mode": "disable", "target_session_attrs": target,
+            }))
+            .unwrap()
+        };
+        let sql = "\\pset tuples_only on\nselect 'in_recovery=' || pg_is_in_recovery();";
+        let out = run(&c("read-write"), sql).await.unwrap();
+        assert!(out.contains("in_recovery=false"), "{out}");
+        let out = run(&c("any"), sql).await.unwrap();
+        assert!(out.contains("in_recovery=true"), "{out}");
     }
 
     #[tokio::test]
