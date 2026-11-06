@@ -729,9 +729,21 @@ mod tests {
         let pid_file = std::env::temp_dir().join(format!("sauron-renew-pid-{}", uuid::Uuid::new_v4()));
         let command = format!("sleep 60 & echo $! > '{}'; wait", pid_file.display());
         let files = Files::default();
-        let cancelled = tokio::time::timeout(Duration::from_millis(500), run_renewal(&command, &files)).await;
-        assert!(cancelled.is_err(), "the command should still have been running");
-        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        // The command runs in a login shell, which can take seconds to start (CI runners load a big profile),
+        // so cancel only once the background sleep is running and its pid is written.
+        let mut renewal = Box::pin(run_renewal(&command, &files));
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let pid = loop {
+            tokio::select! {
+                result = &mut renewal => panic!("the command should still have been running, it ended with {result:?}"),
+                _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+            }
+            match std::fs::read_to_string(&pid_file) {
+                Ok(text) if text.ends_with('\n') => break text,
+                _ => assert!(std::time::Instant::now() < deadline, "the command did not start the background sleep within 30 s"),
+            }
+        };
+        drop(renewal);
         let _ = std::fs::remove_file(&pid_file);
         // A killed process whose parent shell is gone stays a zombie until something reaps it (on Linux that can
         // take a while, macOS is quick), so a zombie counts as stopped too.
