@@ -371,6 +371,11 @@
   background: var(--hover-strong);
 }
 
+/* The hint normally tucks up under an input; under the bar it needs room instead. */
+.update-bar + .field-hint {
+  margin-top: 8px;
+}
+
 .update-bar i {
   display: block;
   height: 100%;

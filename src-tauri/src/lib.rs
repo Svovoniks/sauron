@@ -15,7 +15,7 @@ mod updater;
 
 use cancel::Registry;
 use model::{ConnectionParams, DbType, QueryResult, StatementOutcome, TestReport};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const MAX_ROW_LIMIT: usize = 1_000_000;
 
@@ -224,6 +224,10 @@ pub fn run() {
         .setup(|app| {
             secrets::init(app.path().app_data_dir()?);
             client_cert::init(app.path().app_data_dir()?);
+            let handle = app.handle().clone();
+            client_cert::on_renewal(move |notice| {
+                let _ = handle.emit("cert-renewal", notice);
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

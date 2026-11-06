@@ -21,6 +21,27 @@ static RENEWING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// Long enough for a browser single sign-on.
 const RENEW_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// What an automatic renewal tells the window, so a connect that waits on it does not look stuck.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RenewalNotice {
+    Started { cert: String },
+    Renewed { cert: String, until: String },
+}
+
+static ON_RENEWAL: OnceLock<Box<dyn Fn(RenewalNotice) + Send + Sync>> = OnceLock::new();
+
+/// The app passes how to show renewal notices; without it (MCP, tests) automatic renewals stay silent.
+pub fn on_renewal(notify: impl Fn(RenewalNotice) + Send + Sync + 'static) {
+    let _ = ON_RENEWAL.set(Box::new(notify));
+}
+
+fn tell(notice: RenewalNotice) {
+    if let Some(notify) = ON_RENEWAL.get() {
+        notify(notice);
+    }
+}
+
 /// Where settings.json lives (the app data directory), for the default certificates.
 pub fn init(data_dir: PathBuf) {
     let _ = DATA_DIR.set(data_dir);
@@ -85,19 +106,30 @@ pub async fn renew_if_expired(conn: &ConnectionParams) -> Result<(), String> {
     if command.is_empty() {
         return Ok(());
     }
+    renew_expired(&command, &files, &tell).await
+}
+
+/// The renewal itself, with the notices going to tell (the window in the app, a list in tests).
+async fn renew_expired(command: &str, files: &Files, tell: &(dyn Fn(RenewalNotice) + Sync)) -> Result<(), String> {
     let _renewing = RENEWING.lock().await;
     // another connection may have renewed it while this one waited
-    if !is_expired(&files) {
+    if !is_expired(files) {
         return Ok(());
     }
-    run_renewal(&command, &files).await?;
-    if is_expired(&files) {
-        return Err(format!(
-            "The certificate renewal command finished, but the client certificate {} is still expired",
-            expand(&files.cert).display()
-        ));
+    let cert = expand(&files.cert).display().to_string();
+    tell(RenewalNotice::Started { cert: cert.clone() });
+    run_renewal(command, files).await?;
+    match read("client certificate", &files.cert).and_then(|pem| validity(&pem)) {
+        Ok((_, not_after)) if now() >= not_after.secs => {
+            Err(format!("The certificate renewal command finished, but the client certificate {cert} is still expired"))
+        }
+        Ok((_, not_after)) => {
+            tell(RenewalNotice::Renewed { cert, until: not_after.text });
+            Ok(())
+        }
+        // unreadable now: the connect reports it
+        Err(_) => Ok(()),
     }
-    Ok(())
 }
 
 /// "Renew now" in Settings: runs the renewal command whether or not the certificate has expired, with the
@@ -720,6 +752,38 @@ mod tests {
         let still = renew_now(&copy(&stale), &files).await.unwrap_err();
         assert!(still.contains("still expired"), "{still}");
         assert!(renew_now("  ", &files).await.unwrap_err().contains("renewal command first"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn automatic_renewal_tells_when_it_starts_and_until_when_the_new_certificate_is_valid() {
+        let dir = std::env::temp_dir().join(format!("sauron-renew-auto-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (fresh, stale, cert) = (dir.join("fresh.pem"), dir.join("stale.pem"), dir.join("cert.pem"));
+        std::fs::write(&fresh, certificate_pem((0x17, "250101000000Z"), (0x18, "29991231235900Z"))).unwrap();
+        std::fs::write(&stale, certificate_pem((0x17, "250101000000Z"), (0x17, "250108000000Z"))).unwrap();
+        let files = Files { cert: cert.display().to_string(), ..Files::default() };
+        let copy = |from: &Path| format!("cp '{}' \"$SAURON_SSL_CERT\"", from.display());
+        let seen = std::sync::Mutex::new(Vec::new());
+        let tell = |notice: RenewalNotice| seen.lock().unwrap().push(notice);
+        let started = RenewalNotice::Started { cert: files.cert.clone() };
+
+        std::fs::copy(&stale, &cert).unwrap();
+        renew_expired(&copy(&fresh), &files, &tell).await.unwrap();
+        let renewed = RenewalNotice::Renewed { cert: files.cert.clone(), until: "2999-12-31 23:59 UTC".into() };
+        assert_eq!(*seen.lock().unwrap(), [started.clone(), renewed]);
+
+        // valid already (another connection renewed it meanwhile): no command, no notices
+        seen.lock().unwrap().clear();
+        renew_expired("exit 1", &files, &tell).await.unwrap();
+        assert!(seen.lock().unwrap().is_empty());
+
+        // still expired afterwards: only the start was told, the connect shows the error
+        std::fs::copy(&stale, &cert).unwrap();
+        let still = renew_expired(&copy(&stale), &files, &tell).await.unwrap_err();
+        assert!(still.contains("still expired"), "{still}");
+        assert_eq!(*seen.lock().unwrap(), [started]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

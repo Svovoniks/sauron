@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { COMMAND_ICONS } from "./components/commandIcons";
@@ -30,6 +31,7 @@ import { useAgentLog } from "./hooks/useAgentLog";
 import { useHistory } from "./hooks/useHistory";
 import { useLayoutResize } from "./hooks/useLayoutResize";
 import { useNotices } from "./hooks/useNotices";
+import { CERT_RENEWAL_EVENT, certRenewalText, type CertRenewalNotice } from "./lib/certRenewal";
 import { useSchema } from "./hooks/useSchema";
 import { useSettings } from "./hooks/useSettings";
 import { useUpdater } from "./hooks/useUpdater";
@@ -95,6 +97,22 @@ interface SavePrompt {
 export default function App() {
   const { notices, notify, dismiss } = useNotices();
   const notifyError = useCallback((message: string) => notify("error", message), [notify]);
+
+  // A connect that renews an expired client certificate can wait minutes on a browser login: say why.
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let cancelled = false;
+    listen<CertRenewalNotice>(CERT_RENEWAL_EVENT, (event) => {
+      const text = certRenewalText(event.payload);
+      if (text) notify("info", text);
+    })
+      .then((unlisten) => (cancelled ? unlisten() : (stop = unlisten)))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [notify]);
   const settingsStore = useSettings(notifyError);
   const { settings } = settingsStore;
   const appData = useAppData(notify);
