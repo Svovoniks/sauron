@@ -11,7 +11,7 @@ import {
 } from "react";
 import { comboText, matchesCombo, type LoadingAnimation } from "../lib/settings";
 import type { Schema } from "../lib/schema";
-import type { Connection } from "../types/app";
+import type { Cell, Connection } from "../types/app";
 import { MESSAGES, type QueryTab, type ResultSet, type TabRun } from "../types/workspace";
 import { cellText, clipCell } from "../utils/format";
 import { CheckIcon, CloseIcon, InfoIcon, SearchIcon } from "./icons";
@@ -54,6 +54,76 @@ interface DataViewProps {
 }
 
 const HEADER_HEIGHT = 50;
+
+/** Widest a data column gets from its cell values (a longer header can still widen it). */
+const MAX_CELL_COLUMN_WIDTH = 200;
+const MIN_COLUMN_WIDTH = 60;
+const MIN_ROW_NUMBER_WIDTH = 44;
+/** Rows measured per result: all of them up to this, else an even spread. */
+const WIDTH_SAMPLE_ROWS = 2000;
+/** Longer values are clipped by the column anyway, so measuring more is wasted work. */
+const WIDTH_SAMPLE_CHARS = 80;
+
+interface ColumnWidths {
+  rowNumber: number;
+  columns: number[];
+}
+
+const horizontalPadding = (styles: CSSStyleDeclaration): number =>
+  (Number.parseFloat(styles.paddingLeft) || 0) + (Number.parseFloat(styles.paddingRight) || 0);
+
+const canvasFont = (styles: CSSStyleDeclaration): string => `${styles.fontStyle} ${styles.fontWeight} ${styles.fontSize} ${styles.fontFamily}`;
+
+/**
+ * Column widths for the results table, measured once per result.
+ *
+ * Rows are virtualized, so with automatic table layout the browser sizes columns from whichever
+ * rows happen to be rendered and the widths jump while scrolling. Measuring a sample of all rows
+ * up front and locking the widths with a fixed layout keeps them steady.
+ */
+function measureColumnWidths(table: HTMLTableElement, headers: string[], rows: Cell[][], nullText: string): ColumnWidths | null {
+  const context = document.createElement("canvas").getContext("2d");
+  const header = table.querySelector<HTMLElement>("thead th:not(.row-number)");
+  if (!context || !header) return null;
+
+  const headerStyles = window.getComputedStyle(header);
+  const headerPadding = horizontalPadding(headerStyles) + 2;
+  const headerSpacing = Number.parseFloat(headerStyles.letterSpacing) || 0;
+
+  // Cells share the header's font family but not its weight; fall back to that when there are no rows.
+  const cell = table.querySelector<HTMLElement>("tbody td.truncate");
+  const cellStyles = cell ? window.getComputedStyle(cell) : null;
+  const cellFont = cellStyles ? canvasFont(cellStyles) : `normal 400 ${headerStyles.fontSize} ${headerStyles.fontFamily}`;
+  const cellPadding = (cellStyles ? horizontalPadding(cellStyles) : 24) + 2;
+
+  context.font = canvasFont(headerStyles);
+  const columns = headers.map((name) => context.measureText(name).width + name.length * headerSpacing + headerPadding);
+
+  const step = Math.max(1, rows.length / WIDTH_SAMPLE_ROWS);
+  const cellWidths = headers.map(() => 0);
+  context.font = cellFont;
+  for (let position = 0; position < rows.length; position += step) {
+    const row = rows[Math.floor(position)];
+    for (let index = 0; index < headers.length; index += 1) {
+      if (cellWidths[index] >= MAX_CELL_COLUMN_WIDTH) continue;
+      const text = cellText(row[index] ?? null, nullText).slice(0, WIDTH_SAMPLE_CHARS);
+      cellWidths[index] = Math.max(cellWidths[index], context.measureText(text).width + cellPadding);
+    }
+  }
+
+  const rowNumberCell = table.querySelector<HTMLElement>(".row-number");
+  let rowNumber = MIN_ROW_NUMBER_WIDTH;
+  if (rowNumberCell) {
+    const rowNumberStyles = window.getComputedStyle(rowNumberCell);
+    context.font = cellFont;
+    rowNumber = Math.max(rowNumber, context.measureText(String(rows.length)).width + horizontalPadding(rowNumberStyles) + 2);
+  }
+
+  return {
+    rowNumber: Math.ceil(rowNumber),
+    columns: columns.map((width, index) => Math.ceil(Math.max(MIN_COLUMN_WIDTH, width, Math.min(cellWidths[index], MAX_CELL_COLUMN_WIDTH)))),
+  };
+}
 
 const setSummary = (set: ResultSet): string => {
   if (set.error) return "failed";
@@ -222,6 +292,33 @@ export function DataView({
     overscan: 12,
     scrollPaddingStart: HEADER_HEIGHT,
   });
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const [columnWidths, setColumnWidths] = useState<ColumnWidths | null>(null);
+  const measuredFor = useRef<{ rows: Cell[][]; columns: unknown; nullText: string; rowNumbers: boolean } | null>(null);
+
+  // Measure once per result (and when display prefs change), not per render or scroll. Runs before
+  // paint, so the table never shows with automatic widths. Checked every render because the table
+  // may mount later than the result arrives.
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    const last = measuredFor.current;
+    if (last && last.rows === rows && last.columns === columns && last.nullText === prefs.nullText && last.rowNumbers === prefs.rowNumbers) return;
+    measuredFor.current = { rows, columns, nullText: prefs.nullText, rowNumbers: prefs.rowNumbers };
+    setColumnWidths(
+      measureColumnWidths(
+        table,
+        columns.map((column) => column.name),
+        rows,
+        prefs.nullText,
+      ),
+    );
+  });
+
+  const usableWidths = columnWidths && columnWidths.columns.length === columns.length ? columnWidths : null;
+  const dataColumnsWidth = usableWidths ? usableWidths.columns.reduce((total, width) => total + width, 0) : 0;
+  const rowNumberWidth = usableWidths && prefs.rowNumbers ? usableWidths.rowNumber : 0;
+
   const virtualItems = virtualizer.getVirtualItems();
   const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
   const paddingBottom = virtualItems.length > 0 ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end : 0;
@@ -319,7 +416,17 @@ export function DataView({
     if (!result) return <NotRunState connectionName={connection?.name ?? null} name={tab.name} shortcut={executeShortcut} />;
     return (
       <div className="records-table" ref={recordsTableRef}>
-        <table>
+        <table className={usableWidths ? "fixed-columns" : undefined} ref={tableRef}>
+          {usableWidths ? (
+            <colgroup>
+              {prefs.rowNumbers ? <col style={{ width: rowNumberWidth }} /> : null}
+              {usableWidths.columns.map((width, index) => (
+                // Each column keeps its measured width and takes its share of any spare room, so
+                // narrow results still fill the panel. The 1px keeps rounding from adding a scrollbar.
+                <col key={index} style={{ width: `max(${width}px, calc((100cqw - ${rowNumberWidth + 1}px) * ${width / dataColumnsWidth}))` }} />
+              ))}
+            </colgroup>
+          ) : null}
           <thead>
             <tr>
               {prefs.rowNumbers ? <th className="row-number">#</th> : null}

@@ -212,6 +212,15 @@ table {
   border-collapse: collapse;
 }
 
+/* Widths come from the colgroup, measured once per result, so they stay put while rows scroll in. */
+table.fixed-columns {
+  table-layout: fixed;
+}
+
+table.fixed-columns td {
+  max-width: none;
+}
+
 th {
   background: var(--btn-bg);
   padding: 16px 12px;
