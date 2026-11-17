@@ -1028,7 +1028,16 @@ export default function App() {
   shortcutHandlerRef.current = handleShortcut;
 
   useEffect(() => {
-    const onKeydown = (event: KeyboardEvent) => void shortcutHandlerRef.current(event);
+    const onKeydown = (event: KeyboardEvent) => {
+      if (shortcutHandlerRef.current(event)) return;
+      // Escape in the SQL editor closes the record detail. Monaco stops the event when it uses Escape itself
+      // (suggestions, find widget, extra cursors, a selection), so only an otherwise unused Escape gets here.
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (event.key === "Escape" && target?.closest(".query-editor") && !modalOpenRef.current && selectedIndexRef.current !== null) {
+        event.preventDefault();
+        setSelectedIndex(null);
+      }
+    };
     window.addEventListener("keydown", onKeydown);
     return () => window.removeEventListener("keydown", onKeydown);
   }, []);
