@@ -3,7 +3,11 @@
 //! Every execution registers one `ActiveQuery` before it does anything (including connecting)
 //! and removes it when it finishes. `cancel_query` only ever touches the query that is running
 //! right now, so a cancel can never leak into a later query.
+//!
+//! The window runs queries of several tabs at the same time: each run has its own id and its own
+//! `Registry` in `Runs`, so aborting one tab never stops another.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -98,6 +102,62 @@ impl Drop for Guard<'_> {
     }
 }
 
+/// Queries the window is running, by run id. Each one is cancelled on its own.
+#[derive(Default)]
+pub struct Runs {
+    running: Mutex<HashMap<String, Arc<Registry>>>,
+    next_anonymous: AtomicU64,
+}
+
+impl Runs {
+    /// Register a run. Without an id the run gets a private one: only cancel_all reaches it.
+    pub fn start(&self, run_id: Option<String>) -> Run<'_> {
+        let key = run_id.unwrap_or_else(|| format!("anonymous-{}", self.next_anonymous.fetch_add(1, Ordering::Relaxed)));
+        let registry = Arc::new(Registry::default());
+        self.running.lock().unwrap().insert(key.clone(), registry.clone());
+        Run { runs: self, key, registry }
+    }
+
+    /// Stop one run. Does nothing when it already finished.
+    pub async fn cancel(&self, run_id: &str) {
+        let registry = self.running.lock().unwrap().get(run_id).cloned();
+        if let Some(registry) = registry {
+            registry.cancel().await;
+        }
+    }
+
+    /// Stop every run.
+    pub async fn cancel_all(&self) {
+        let registries: Vec<_> = self.running.lock().unwrap().values().cloned().collect();
+        for registry in registries {
+            registry.cancel().await;
+        }
+    }
+}
+
+/// A registered run; unregisters itself when dropped.
+pub struct Run<'a> {
+    runs: &'a Runs,
+    key: String,
+    registry: Arc<Registry>,
+}
+
+impl Run<'_> {
+    pub fn registry(&self) -> &Registry {
+        &self.registry
+    }
+}
+
+impl Drop for Run<'_> {
+    fn drop(&mut self) {
+        let mut running = self.runs.running.lock().unwrap();
+        // A newer run may have reused the id; only remove our own entry.
+        if running.get(&self.key).is_some_and(|r| Arc::ptr_eq(r, &self.registry)) {
+            running.remove(&self.key);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +203,57 @@ mod tests {
             })
             .await;
         assert_eq!(result, Err(CANCELLED.to_string()));
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_run_leaves_the_others_running() {
+        let runs = Runs::default();
+        let first = runs.start(Some("a".into()));
+        let second = runs.start(Some("b".into()));
+        let first_guard = first.registry().begin();
+        let second_guard = second.registry().begin();
+
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            Ok::<_, String>(())
+        };
+        let (a, b, _) = tokio::join!(first_guard.run(slow()), second_guard.run(slow()), async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            runs.cancel("a").await;
+        });
+        assert_eq!(a, Err(CANCELLED.to_string()));
+        assert_eq!(b, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn cancel_all_stops_every_run() {
+        let runs = Runs::default();
+        let first = runs.start(Some("a".into()));
+        let second = runs.start(None);
+        let first_guard = first.registry().begin();
+        let second_guard = second.registry().begin();
+
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok::<_, String>(())
+        };
+        let (a, b, _) = tokio::join!(first_guard.run(slow()), second_guard.run(slow()), async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            runs.cancel_all().await;
+        });
+        assert_eq!(a, Err(CANCELLED.to_string()));
+        assert_eq!(b, Err(CANCELLED.to_string()));
+    }
+
+    #[test]
+    fn finished_run_is_unregistered_without_removing_a_newer_run_with_the_same_id() {
+        let runs = Runs::default();
+        let old = runs.start(Some("a".into()));
+        let newer = runs.start(Some("a".into()));
+        drop(old);
+        assert!(runs.running.lock().unwrap().get("a").is_some_and(|r| Arc::ptr_eq(r, &newer.registry)));
+        drop(newer);
+        assert!(runs.running.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

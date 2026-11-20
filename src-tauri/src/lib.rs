@@ -13,7 +13,7 @@ mod storage;
 mod test_connection;
 mod updater;
 
-use cancel::Registry;
+use cancel::{Registry, Runs};
 use model::{ConnectionParams, DbType, QueryResult, StatementOutcome, TestReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -21,14 +21,16 @@ const MAX_ROW_LIMIT: usize = 1_000_000;
 
 #[tauri::command]
 async fn execute_query(
-    registry: State<'_, Registry>,
+    runs: State<'_, Runs>,
     connection: ConnectionParams,
     statements: Vec<String>,
     row_limit: usize,
+    run_id: Option<String>,
 ) -> Result<QueryResult, String> {
     let row_limit = row_limit.clamp(1, MAX_ROW_LIMIT);
     // Registered before anything else (even the password lookup or connect) so Abort always works.
-    let guard = registry.begin();
+    let run = runs.start(run_id);
+    let guard = run.registry().begin();
     let password = blocking_password(&connection.id).await?;
 
     match connection.db_type {
@@ -38,18 +40,24 @@ async fn execute_query(
 }
 
 /// Runs a script statement by statement in one session and returns every statement's result.
+/// Several scripts (one per query tab) can run at once; run_id is what cancel_query stops.
 #[tauri::command]
 async fn execute_script(
-    registry: State<'_, Registry>,
+    runs: State<'_, Runs>,
     connection: ConnectionParams,
     statements: Vec<String>,
     row_limit: usize,
     background: Option<bool>,
+    run_id: Option<String>,
 ) -> Result<Vec<StatementOutcome>, String> {
     let row_limit = row_limit.clamp(1, MAX_ROW_LIMIT);
-    // Background work (schema loading) must not take over the "running query" slot that Abort stops.
+    // Background work (schema loading) is not registered, so Abort never stops it.
     let own_registry = Registry::default();
-    let guard = if background == Some(true) { own_registry.begin() } else { registry.begin() };
+    let run = (background != Some(true)).then(|| runs.start(run_id));
+    let guard = match &run {
+        Some(run) => run.registry().begin(),
+        None => own_registry.begin(),
+    };
     let password = blocking_password(&connection.id).await?;
 
     match connection.db_type {
@@ -88,16 +96,18 @@ async fn renew_certificates(command: String, root: String, cert: String, key: St
 /// built-in read-only catalog commands (`meta.rs`) are used instead.
 #[tauri::command]
 async fn execute_meta_command(
-    registry: State<'_, Registry>,
+    runs: State<'_, Runs>,
     connection: ConnectionParams,
     command_text: String,
     psql_path: Option<String>,
     use_fallback: Option<bool>,
+    run_id: Option<String>,
 ) -> Result<meta::MetaOutput, String> {
     if connection.db_type != DbType::Postgres {
         return Err("Backslash commands are only available for Postgres connections. For ClickHouse use SHOW DATABASES, SHOW TABLES, DESCRIBE TABLE <name>.".to_string());
     }
-    let guard = registry.begin();
+    let run = runs.start(run_id);
+    let guard = run.registry().begin();
     let password = blocking_password(&connection.id).await?;
 
     match psql::execute(&connection, &password, &command_text, &guard, psql_path.as_deref()).await {
@@ -110,9 +120,13 @@ async fn execute_meta_command(
     }
 }
 
+/// Stops one run, or every run of the window when no run_id is given.
 #[tauri::command]
-async fn cancel_query(registry: State<'_, Registry>) -> Result<(), String> {
-    registry.cancel().await;
+async fn cancel_query(runs: State<'_, Runs>, run_id: Option<String>) -> Result<(), String> {
+    match run_id {
+        Some(id) => runs.cancel(&id).await,
+        None => runs.cancel_all().await,
+    }
     Ok(())
 }
 
@@ -216,7 +230,7 @@ pub fn run_mcp(allow_writes: bool) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(Registry::default())
+        .manage(Runs::default())
         .manage(updater::PendingUpdate::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_fs::init())

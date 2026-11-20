@@ -11,7 +11,14 @@ import type { QueryResult, StatementOutcome } from "../types/app";
 
 const files = new Map<string, string>();
 const passwords = new Map<string, string>();
-let cancelled = false;
+/** Runs cancelled by id; a cancel without an id stops them all. */
+const cancelledRuns = new Set<string>();
+let cancelAll = 0;
+/** Whether the run with this id has been cancelled since it started. */
+const cancelWatch = (runId: unknown) => {
+  const since = cancelAll;
+  return () => cancelAll !== since || (typeof runId === "string" && cancelledRuns.has(runId));
+};
 
 const sampleResult = (rowLimit: number): QueryResult => {
   const total = 12_000;
@@ -210,7 +217,8 @@ export function installDevMock() {
         passwords.delete(args.connectionId as string);
         return null;
       case "cancel_query":
-        cancelled = true;
+        if (typeof args.runId === "string") cancelledRuns.add(args.runId);
+        else cancelAll++;
         return null;
       case "execute_meta_command": {
         const text = String(args.commandText);
@@ -286,7 +294,7 @@ export function installDevMock() {
         };
       }
       case "execute_script": {
-        cancelled = false;
+        const cancelled = cancelWatch(args.runId);
         const statements = args.statements as string[];
         const rowLimit = args.rowLimit as number;
         const outcomes: StatementOutcome[] = [];
@@ -298,8 +306,8 @@ export function installDevMock() {
             continue;
           }
           if (sql.includes("sleep") || params.has("slow")) {
-            for (let i = 0; i < (params.has("slow") ? 1200 : 100) && !cancelled; i++) await sleep(100);
-            if (cancelled) throw "Query was cancelled";
+            for (let i = 0; i < (params.has("slow") ? 1200 : 100) && !cancelled(); i++) await sleep(100);
+            if (cancelled()) throw "Query was cancelled";
           }
           await sleep(120);
           const fail = (message: string, code: string, position: number | null) =>
@@ -332,12 +340,12 @@ export function installDevMock() {
         return outcomes;
       }
       case "execute_query": {
-        cancelled = false;
+        const cancelled = cancelWatch(args.runId);
         const statements = args.statements as string[];
         const sql = statements.join(";\n");
         if (sql.includes("sleep") || params.has("slow")) {
-          for (let i = 0; i < (params.has("slow") ? 1200 : 100) && !cancelled; i++) await sleep(100);
-          if (cancelled) throw "Query was cancelled";
+          for (let i = 0; i < (params.has("slow") ? 1200 : 100) && !cancelled(); i++) await sleep(100);
+          if (cancelled()) throw "Query was cancelled";
         }
         await sleep(150);
         if (sql.includes("boom")) throw 'ERROR: relation "boom" does not exist';

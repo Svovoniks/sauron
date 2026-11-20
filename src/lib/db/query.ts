@@ -17,9 +17,11 @@ export async function executeScript(
   rowLimit: number,
   /** Background work (schema loading) is not stopped by Abort and does not stop a running query. */
   background = false,
+  /** Id that cancelQuery stops this run with. Runs of different tabs go on at the same time. */
+  runId: string | null = null,
 ): Promise<StatementOutcome[]> {
   try {
-    return await invoke<StatementOutcome[]>("execute_script", { connection, statements, rowLimit, background });
+    return await invoke<StatementOutcome[]>("execute_script", { connection, statements, rowLimit, background, runId });
   } catch (error) {
     throw toError(error);
   }
@@ -48,6 +50,7 @@ export async function executeMetaCommand(
   connection: Connection,
   commandText: string,
   psql: { path?: string; useFallback?: boolean } = {},
+  runId: string | null = null,
 ): Promise<MetaResult> {
   try {
     return await invoke<MetaResult>("execute_meta_command", {
@@ -55,15 +58,17 @@ export async function executeMetaCommand(
       commandText,
       psqlPath: psql.path || null,
       useFallback: psql.useFallback ?? true,
+      runId,
     });
   } catch (error) {
     throw toError(error);
   }
 }
 
-export async function cancelQuery(): Promise<void> {
+/** Stops the run with this id, or every running query when no id is given. */
+export async function cancelQuery(runId: string | null = null): Promise<void> {
   try {
-    await invoke("cancel_query");
+    await invoke("cancel_query", { runId });
   } catch (error) {
     console.warn("Failed to cancel the query.", error);
   }

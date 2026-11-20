@@ -337,10 +337,8 @@ export default function App() {
   const runNow = (kind: RunKind) => {
     // The single guard for every way of starting a query (button, window shortcut, editor shortcut).
     if (modalOpenRef.current || !activeTab) return;
-    if (ws.runningTabId) {
-      if (ws.runningTabId !== activeTab.id) notify("info", `A query is still running in “${ws.tabs.find((t) => t.id === ws.runningTabId)?.name ?? "another tab"}”. Wait for it or abort it first.`);
-      return;
-    }
+    // Other tabs may be running: only this tab's own query has to finish first.
+    if (ws.runningTabIds.has(activeTab.id)) return;
     if (!activeConnection) {
       ws.reportError(activeTab.id, "No active connection selected.");
       return;
@@ -365,10 +363,6 @@ export default function App() {
 
   /** Run `sql` in a fresh tab (schema panel, history). */
   const openAndRun = (sql: string, name: string, connection: Connection | null = activeConnection) => {
-    if (ws.runningTabId) {
-      notify("info", "A query is still running. Wait for it or abort it first.");
-      return;
-    }
     const tab = ws.addTab({ name, sql, connectionId: connection?.id ?? null });
     setSelectedIndex(null);
     if (!connection) return;
@@ -383,8 +377,10 @@ export default function App() {
     });
   };
 
+  const activeTabRunning = activeTab !== null && ws.runningTabIds.has(activeTab.id);
+
   const loadMore = () => {
-    if (!activeRun || !activeTab || !activeConnection || ws.runningTabId) return;
+    if (!activeRun || !activeTab || !activeConnection || activeTabRunning) return;
     // Only the statement that was cut short: earlier statements of a script must not run twice.
     const set = activeRun.sets[activeRun.activeSet];
     requestRun({
@@ -403,7 +399,7 @@ export default function App() {
 
   /** Run the text of the last run again, optionally replacing it or overriding the timeout. */
   const rerunLast = (override: { text?: string; offset?: number; timeoutSecs?: number } = {}) => {
-    if (!activeRun || !activeTab || !activeConnection || ws.runningTabId) return;
+    if (!activeRun || !activeTab || !activeConnection || activeTabRunning) return;
     requestRun({
       tabId: activeTab.id,
       connection: activeConnection,
@@ -444,7 +440,8 @@ export default function App() {
     }
   };
 
-  const abort = () => ws.abort();
+  /** Stops the query of the tab on screen; queries in other tabs keep running. */
+  const abort = () => activeTab && ws.abort(activeTab.id);
 
   // --- tabs ----------------------------------------------------------------------------------
   const selectTab = (id: string) => {
@@ -461,7 +458,7 @@ export default function App() {
   };
 
   const closeTabsNow = (ids: string[]) => {
-    if (ws.runningTabId && ids.includes(ws.runningTabId)) ws.abort();
+    ids.forEach((id) => ws.abort(id));
     ws.closeTabs(ids);
     ids.forEach((id) => editor.dropModel(id));
     setSelectedIndex(null);
@@ -564,7 +561,7 @@ export default function App() {
     void warmUp(connection);
     if (connection.id === activeTab.connectionId) return;
     // A running query belongs to the previous connection.
-    if (ws.runningTabId === activeTab.id) ws.abort();
+    ws.abort(activeTab.id);
     ws.patchTab(activeTab.id, { connectionId: connection.id });
     appData.selectConnection(connection.id);
     editor.clearMarkers();
@@ -596,7 +593,7 @@ export default function App() {
   const confirmDelete = () => {
     if (!pendingDelete) return;
     if (pendingDelete.type === "connection") {
-      if (ws.runningTabId && ws.tabs.find((t) => t.id === ws.runningTabId)?.connectionId === pendingDelete.item.id) ws.abort();
+      ws.tabs.filter((t) => t.connectionId === pendingDelete.item.id).forEach((t) => ws.abort(t.id));
       appData.deleteConnection(pendingDelete.item.id);
       schemas.forget(pendingDelete.item.id);
     } else if (pendingDelete.type === "query") {
@@ -741,7 +738,7 @@ export default function App() {
   };
 
   const rerunEntry = (entry: HistoryEntry) => {
-    if (!activeTab || ws.runningTabId) return;
+    if (!activeTab || activeTabRunning) return;
     const connection = restoreEntry(entry, true);
     if (!connection) return;
     // Built from the entry itself: the closures of this render still see the connection from before the switch.
@@ -1274,7 +1271,7 @@ export default function App() {
             executeShortcut={settings.shortcuts.execute}
             commandUnsupported={dbType !== "postgres"}
             isCommandQuery={isMetaCommand(activeTab?.sql ?? "")}
-            isLoading={ws.runningTabId !== null}
+            isLoading={activeTabRunning}
             onAbortQuery={abort}
             onOpenFile={() => void openSqlFile()}
             onOpenSettings={(section) => openSettings(section)}
@@ -1293,7 +1290,7 @@ export default function App() {
                 onRename={(id, name) => ws.patchTab(id, { name })}
                 onReorder={ws.moveTab}
                 onSelect={selectTab}
-                runningId={ws.runningTabId}
+                runningIds={ws.runningTabIds}
                 tabs={ws.tabs}
               />
             }

@@ -77,7 +77,7 @@ interface Options {
   onError: (message: string) => void;
 }
 
-/** Query tabs (persisted) and the latest run of each (memory only). Only one query runs at a time. */
+/** Query tabs (persisted) and the latest run of each (memory only). Every tab runs on its own, at the same time as the others. */
 export function useWorkspace(options: Options) {
   const [tabs, setTabs] = useState<QueryTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -211,9 +211,11 @@ export function useWorkspace(options: Options) {
   }, []);
 
   // --- runs ------------------------------------------------------------------------------------
-  const activeRun = useRef<{ id: number; tabId: string; request: RunRequest; startedAt: number } | null>(null);
+  /** Running queries by tab. A tab runs one query at a time. */
+  const activeRuns = useRef(new Map<string, { id: number; runId: string; request: RunRequest; startedAt: number }>());
   const nextRun = useRef(1);
-  const [runningTabId, setRunningTabId] = useState<string | null>(null);
+  const [runningTabIds, setRunningTabIds] = useState<ReadonlySet<string>>(() => new Set());
+  const syncRunning = useCallback(() => setRunningTabIds(new Set(activeRuns.current.keys())), []);
 
   const setRun = useCallback((tabId: string, run: TabRun) => setRuns((current) => ({ ...current, [tabId]: run })), []);
   const patchRun = useCallback(
@@ -221,26 +223,30 @@ export function useWorkspace(options: Options) {
     [],
   );
 
-  const finish = useCallback((id: number, apply: () => void) => {
-    if (activeRun.current?.id !== id) return false;
-    activeRun.current = null;
-    // A transition: showing a big result takes a while to render, and this lets React do it in slices between frames
-    // instead of in one block that freezes the loading animation.
-    startTransition(() => {
-      setRunningTabId(null);
-      apply();
-    });
-    return true;
-  }, []);
+  const finish = useCallback(
+    (tabId: string, id: number, apply: () => void) => {
+      if (activeRuns.current.get(tabId)?.id !== id) return false;
+      activeRuns.current.delete(tabId);
+      // A transition: showing a big result takes a while to render, and this lets React do it in slices between frames
+      // instead of in one block that freezes the loading animation.
+      startTransition(() => {
+        syncRunning();
+        apply();
+      });
+      return true;
+    },
+    [syncRunning],
+  );
 
   const startRun = useCallback(
     (request: RunRequest): boolean => {
-      if (activeRun.current !== null) return false;
-      const id = nextRun.current++;
       const { tabId, connection } = request;
+      if (activeRuns.current.has(tabId)) return false;
+      const id = nextRun.current++;
+      const runId = `${tabId}#${id}`;
       const startedAt = Date.now();
-      activeRun.current = { id, tabId, request, startedAt };
-      setRunningTabId(tabId);
+      activeRuns.current.set(tabId, { id, runId, request, startedAt });
+      syncRunning();
       const base: TabRun = {
         status: "running",
         startedAt,
@@ -261,7 +267,7 @@ export function useWorkspace(options: Options) {
 
       const done = (patch: Partial<TabRun>, sets: ResultSet[], error: string | null, cancelled = false) => {
         const ms = Date.now() - startedAt;
-        const finished = finish(id, () => {
+        const finished = finish(tabId, id, () => {
           // The tab may have been closed while the query ran.
           if (!tabsRef.current.some((tab) => tab.id === tabId)) return;
           const firstError = sets.findIndex((set) => set.error);
@@ -277,7 +283,7 @@ export function useWorkspace(options: Options) {
       const effective = request.timeoutSecs !== undefined ? { ...connection, timeout_secs: request.timeoutSecs } : connection;
 
       if (isMetaCommand(request.text)) {
-        executeMetaCommand(effective, request.text, request.psql)
+        executeMetaCommand(effective, request.text, request.psql, runId)
           .then((output) => done({ meta: { text: output.text } }, [], null))
           .catch(fail);
         return true;
@@ -288,7 +294,7 @@ export function useWorkspace(options: Options) {
         fail(new Error("No SQL statement to execute."));
         return true;
       }
-      executeScript(effective, ranges.map((r) => r.text), request.rowLimit)
+      executeScript(effective, ranges.map((r) => r.text), request.rowLimit, false, runId)
         .then((outcomes) =>
           done(
             {},
@@ -299,22 +305,25 @@ export function useWorkspace(options: Options) {
         .catch(fail);
       return true;
     },
-    [finish, setRun],
+    [finish, setRun, syncRunning],
   );
 
-  const abort = useCallback(() => {
-    const current = activeRun.current;
-    if (!current) return;
-    void cancelQuery();
-    window.setTimeout(() => {
-      if (activeRun.current?.id !== current.id) return;
-      const finished = finish(current.id, () => {
-        if (!tabsRef.current.some((tab) => tab.id === current.tabId)) return;
-        setRuns((r) => (r[current.tabId] ? { ...r, [current.tabId]: { ...r[current.tabId], status: "done", finishedAt: Date.now(), sets: [], error: ABORTED_MESSAGE } } : r));
-      });
-      if (finished) optionsRef.current.onRunFinished(summarize(current.request, [], Date.now() - current.startedAt, ABORTED_MESSAGE, true));
-    }, ABORT_GRACE_MS);
-  }, [finish]);
+  /** Stops the query running in this tab, if any. */
+  const abort = useCallback(
+    (tabId: string) => {
+      const current = activeRuns.current.get(tabId);
+      if (!current) return;
+      void cancelQuery(current.runId);
+      window.setTimeout(() => {
+        const finished = finish(tabId, current.id, () => {
+          if (!tabsRef.current.some((tab) => tab.id === tabId)) return;
+          setRuns((r) => (r[tabId] ? { ...r, [tabId]: { ...r[tabId], status: "done", finishedAt: Date.now(), sets: [], error: ABORTED_MESSAGE } } : r));
+        });
+        if (finished) optionsRef.current.onRunFinished(summarize(current.request, [], Date.now() - current.startedAt, ABORTED_MESSAGE, true));
+      }, ABORT_GRACE_MS);
+    },
+    [finish],
+  );
 
   const showSavedResult = useCallback(
     (tabId: string, result: QueryResult, source: string, connectionId: string | null, connectionName: string, sql: string) => {
@@ -355,7 +364,7 @@ export function useWorkspace(options: Options) {
     setActiveTabId,
     initialized,
     runs,
-    runningTabId,
+    runningTabIds,
     dirtyTabs,
     patchTab,
     addTab,

@@ -7,7 +7,7 @@ import { CloseIcon, PinIcon, PlusIcon } from "./icons";
 interface QueryTabsProps {
   tabs: QueryTab[];
   activeId: string | null;
-  runningId: string | null;
+  runningIds: ReadonlySet<string>;
   dirtyIds: Set<string>;
   connections: Connection[];
   highlightProd: boolean;
@@ -84,7 +84,7 @@ export function QueryTabs(props: QueryTabsProps) {
             title={`${tab.name}${connection ? ` · ${connection.name}` : ""}`}
           >
             <span className="query-tab-dot" style={{ background: props.highlightProd || env !== "prod" ? ENV_COLOR[env] : ENV_COLOR[""] }} />
-            {props.runningId === tab.id ? <span className="mini-spinner" /> : null}
+            {props.runningIds.has(tab.id) ? <span className="mini-spinner" /> : null}
             {tab.pinned ? <PinIcon size={12} /> : null}
             {renaming === tab.id ? (
               <input
