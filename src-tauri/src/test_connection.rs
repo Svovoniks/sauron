@@ -7,7 +7,7 @@ use tokio::net::{lookup_host, TcpStream};
 
 use crate::cancel::Guard;
 use crate::model::{ConnectionParams, DbType, TargetSessionAttrs, TestReport, TestStep};
-use crate::{clickhouse, postgres};
+use crate::{clickhouse, kafka, postgres};
 
 struct Steps {
     steps: Vec<TestStep>,
@@ -42,6 +42,9 @@ pub async fn run(conn: &ConnectionParams, password: &str, guard: &Guard<'_>) -> 
     let mut steps = Steps { steps: Vec::new() };
 
     let started = Instant::now();
+    if conn.db_type == DbType::Kafka {
+        return test_kafka(conn, password, guard, steps).await;
+    }
     if conn.db_type == DbType::Postgres {
         let endpoints = match conn.pg_hosts() {
             Ok(hosts) => hosts.endpoints().into_iter().map(|(h, p)| (h.to_string(), p)).collect::<Vec<_>>(),
@@ -79,6 +82,52 @@ pub async fn run(conn: &ConnectionParams, password: &str, guard: &Guard<'_>) -> 
     match conn.db_type {
         DbType::Postgres => test_postgres(conn, password, guard, steps, None).await,
         DbType::Clickhouse => test_clickhouse(conn, password, guard, steps).await,
+        DbType::Kafka => unreachable!("tested above"),
+    }
+}
+
+/// Kafka: the first broker on its own (DNS, TCP), then the real client: login (if any) and the cluster's topics.
+async fn test_kafka(conn: &ConnectionParams, password: &str, guard: &Guard<'_>, mut steps: Steps) -> TestReport {
+    let started = Instant::now();
+    let hosts = match conn.pg_hosts() {
+        Ok(hosts) => hosts.endpoints().into_iter().map(|(h, p)| (h.to_string(), p)).collect::<Vec<_>>(),
+        Err(message) => return steps.fail("Check address", message, started),
+    };
+    let (host, port) = hosts[0].clone();
+
+    let started = Instant::now();
+    let addrs: Vec<_> = match lookup_host((host.as_str(), port)).await {
+        Ok(found) => found.collect(),
+        Err(e) => return steps.fail("Resolve host", format!("{host}: no such host ({e})"), started),
+    };
+    let Some(first) = addrs.first().copied() else {
+        return steps.fail("Resolve host", "no addresses found", started);
+    };
+    steps.ok("Resolve host", format!("{host} is {}", first.ip()), started);
+
+    let started = Instant::now();
+    match tokio::time::timeout(Duration::from_secs(10), TcpStream::connect(first)).await {
+        Ok(Ok(_)) => steps.ok("Open TCP connection", format!("port {port}"), started),
+        Ok(Err(e)) => return steps.fail("Open TCP connection", e.to_string(), started),
+        Err(_) => return steps.fail("Open TCP connection", "timed out after 10 s", started),
+    }
+
+    let started = Instant::now();
+    let login = if conn.username.trim().is_empty() {
+        "no login".to_string()
+    } else {
+        format!("as {} ({})", conn.username.trim(), conn.sasl_mechanism.label())
+    };
+    match guard.run(kafka::probe(conn, password)).await {
+        Ok(topics) => {
+            steps.ok("Log in and read the cluster", format!("{login}, {topics} topics"), started);
+            TestReport {
+                ok: true,
+                steps: steps.steps,
+                server_version: Some(format!("Kafka · {topics} topics")),
+            }
+        }
+        Err(message) => steps.fail("Log in and read the cluster", message, started),
     }
 }
 
@@ -86,6 +135,10 @@ fn endpoint(conn: &ConnectionParams) -> Result<(String, u16), String> {
     let port = conn.port_number()?;
     let host = match conn.db_type {
         DbType::Postgres => {
+            let hosts = conn.pg_hosts()?;
+            return Ok((hosts.hosts[0].to_string(), hosts.ports[0]));
+        }
+        DbType::Kafka => {
             let hosts = conn.pg_hosts()?;
             return Ok((hosts.hosts[0].to_string(), hosts.ports[0]));
         }

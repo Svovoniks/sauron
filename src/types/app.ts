@@ -1,4 +1,14 @@
-export type DbType = "postgres" | "clickhouse";
+export type DbType = "postgres" | "clickhouse" | "kafka";
+
+export const DB_TYPE_LABEL: Record<DbType, string> = { postgres: "Postgres", clickhouse: "ClickHouse", kafka: "Kafka" };
+
+/** Kafka only: how a connection with a user name logs in. Without a user name there is no login. */
+export type SaslMechanism = "plain" | "scram-sha-256" | "scram-sha-512";
+export const SASL_MECHANISMS: { value: SaslMechanism; label: string }[] = [
+  { value: "scram-sha-512", label: "SCRAM-SHA-512" },
+  { value: "scram-sha-256", label: "SCRAM-SHA-256" },
+  { value: "plain", label: "PLAIN (password sent as is)" },
+];
 
 /**
  * disable: no TLS (ClickHouse: http)
@@ -49,6 +59,8 @@ export interface Connection {
   use_default_certs: boolean;
   /** Postgres only; "any" for connections saved before multi-host support. */
   target_session_attrs: TargetSessionAttrs;
+  /** Kafka only; used when username is set. */
+  sasl_mechanism: SaslMechanism;
 }
 
 /** Connection being edited in the modal: `password === ""` on an existing connection means "unchanged". */
@@ -141,7 +153,7 @@ export const emptyAppData = (): AppData => ({
   results: {},
 });
 
-export const defaultPort = (dbType: DbType) => (dbType === "postgres" ? "5432" : "8123");
+export const defaultPort = (dbType: DbType) => (dbType === "postgres" ? "5432" : dbType === "kafka" ? "9092" : "8123");
 
 /** Defaults for a new connection (Settings → Connections). */
 export interface DraftDefaults {
@@ -170,6 +182,7 @@ export const emptyDraft = (defaults: Partial<DraftDefaults> = {}): ConnectionDra
   ssl_key: "",
   use_default_certs: defaults.useDefaultCerts ?? false,
   target_session_attrs: "any",
+  sasl_mechanism: "scram-sha-512",
   password: "",
 });
 

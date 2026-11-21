@@ -1,7 +1,7 @@
 import type { ConnStatus } from "../hooks/useConnectionStatus";
 import { comboText } from "../lib/settings";
 import { formatDuration } from "../lib/history";
-import type { Connection } from "../types/app";
+import { DB_TYPE_LABEL, type Connection } from "../types/app";
 import type { TabRun } from "../types/workspace";
 import { ClockIcon, GearIcon, InfoIcon } from "./icons";
 
@@ -31,7 +31,7 @@ export function StatusBar({ connection, status, run, rowLimit, settingsShortcut,
             <span className={`conn-dot ${status.state}`} />
             {connection.name || "Unnamed"}
           </span>
-          {status.version ? <span className="item">{status.version}</span> : <span className="item">{connection.db_type === "postgres" ? "Postgres" : "ClickHouse"}</span>}
+          {status.version ? <span className="item">{status.version}</span> : <span className="item">{DB_TYPE_LABEL[connection.db_type]}</span>}
           <span className="item" title="Per-statement timeout of this connection">
             <ClockIcon size={12} />
             {connection.timeout_secs > 0 ? `timeout ${connection.timeout_secs} s` : "no timeout"}

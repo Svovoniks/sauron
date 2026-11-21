@@ -24,11 +24,14 @@ type TreeRow =
   | { type: "column"; key: string; column: SchemaColumn }
   | { type: "function"; key: string; fn: SchemaFunction };
 
-const SECTION: Record<string, string> = { table: "Tables", view: "Views", matview: "Materialized views", foreign: "Foreign tables" };
-const KIND_LABEL = { table: "table", view: "view", matview: "mat. view", foreign: "foreign" } as const;
+const SECTION: Record<string, string> = { table: "Tables", view: "Views", matview: "Materialized views", foreign: "Foreign tables", topic: "Topics" };
+const KIND_LABEL = { table: "table", view: "view", matview: "mat. view", foreign: "foreign", topic: "topic" } as const;
+/** Kafka's own topics (consumer offsets, transactions) are not shown. */
+const isInternalTopic = (name: string) => name.startsWith("__");
 
 export function SchemaPanel({ connection, state, onLoad, onInsert, onSelectAll, onDescribe, onCopy }: SchemaPanelProps) {
   const { schema } = state;
+  const isKafka = connection?.db_type === "kafka";
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -48,13 +51,13 @@ export function SchemaPanel({ connection, state, onLoad, onInsert, onSelectAll, 
   const current = selected && schema?.schemas.includes(selected) ? selected : defaultSchema;
 
   const q = query.trim().toLowerCase();
-  const tables = useMemo(() => (schema?.tables ?? []).filter((t) => t.schema === current), [schema, current]);
+  const tables = useMemo(() => (schema?.tables ?? []).filter((t) => t.schema === current && !(t.kind === "topic" && isInternalTopic(t.name))), [schema, current]);
   const functions = useMemo(() => (schema?.functions ?? []).filter((f) => f.schema === current), [schema, current]);
 
   const treeRows = useMemo(() => {
     const matches = (table: SchemaTable) => !q || table.name.toLowerCase().includes(q) || table.columns.some((c) => c.name.toLowerCase().includes(q));
     const out: TreeRow[] = [];
-    for (const kind of ["table", "view", "matview", "foreign"] as const) {
+    for (const kind of ["table", "view", "matview", "foreign", "topic"] as const) {
       const items = tables.filter((t) => t.kind === kind && matches(t));
       if (items.length === 0) continue;
       const isCollapsed = collapsed.has(kind);
@@ -119,6 +122,31 @@ export function SchemaPanel({ connection, state, onLoad, onInsert, onSelectAll, 
       }
       case "table": {
         const { table } = row;
+        if (table.kind === "topic") {
+          return (
+            <div className="t-row" onClick={() => onInsert(table.name)} onDoubleClick={() => onSelectAll(table)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onSelectAll(table)} title="Click to use this topic in the form, double-click to read its newest messages">
+              <span className="tw" />
+              <span className="ti">
+                <TableIcon />
+              </span>
+              <span className="t-name">{table.name}</span>
+              <span className="t-meta" title={table.rows !== null ? `${table.rows} partition${table.rows === 1 ? "" : "s"}` : ""}>
+                {table.rows !== null ? `${table.rows}p` : ""}
+              </span>
+              <span className="t-actions">
+                <button aria-label={`Read ${table.name}`} onClick={(e) => { e.stopPropagation(); onSelectAll(table); }} title="Read the newest messages" type="button">
+                  <PlayIcon size={11} />
+                </button>
+                <button aria-label={`Describe ${table.name}`} onClick={(e) => { e.stopPropagation(); onDescribe(table); }} title="Partitions and offsets" type="button">
+                  <InfoIcon size={13} />
+                </button>
+                <button aria-label={`Copy name of ${table.name}`} onClick={(e) => { e.stopPropagation(); onCopy(table.name); }} title="Copy name" type="button">
+                  <CopyIcon />
+                </button>
+              </span>
+            </div>
+          );
+        }
         return (
           <div className={`t-row ${table.kind !== "table" ? "view" : ""} ${row.open ? "open" : ""}`} onClick={() => toggle(row.key)} onDoubleClick={() => onSelectAll(table)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && toggle(row.key)}>
             <span className="tw">
@@ -180,7 +208,8 @@ export function SchemaPanel({ connection, state, onLoad, onInsert, onSelectAll, 
     <div className="schema-panel">
       <div className="panel-tools">
         <div className="schema-select-row">
-          <select aria-label={schema?.dbType === "clickhouse" ? "Database" : "Schema"} disabled={!schema} onChange={(e) => setSelected(e.target.value)} value={current}>
+          {isKafka ? <span className="schema-select-label">{schema ? `${tables.length.toLocaleString("en-US")} topics` : "Topics"}</span> : null}
+          <select hidden={isKafka} aria-label={schema?.dbType === "clickhouse" ? "Database" : "Schema"} disabled={!schema} onChange={(e) => setSelected(e.target.value)} value={current}>
             {(schema?.schemas.length ? schema.schemas : [current]).map((name) => (
               <option key={name} value={name}>
                 {name}
@@ -193,7 +222,7 @@ export function SchemaPanel({ connection, state, onLoad, onInsert, onSelectAll, 
         </div>
         <label className="panel-search">
           <SearchIcon />
-          <input aria-label="Find table or column" onChange={(event) => setQuery(event.target.value)} placeholder="Find table or column" spellCheck={false} value={query} />
+          <input aria-label={isKafka ? "Find topic" : "Find table or column"} onChange={(event) => setQuery(event.target.value)} placeholder={isKafka ? "Find topic" : "Find table or column"} spellCheck={false} value={query} />
         </label>
       </div>
       <div className="tree" ref={treeRef}>
@@ -215,7 +244,7 @@ export function SchemaPanel({ connection, state, onLoad, onInsert, onSelectAll, 
         {schema && tables.length === 0 && functions.length === 0 ? (
           <div className="sidebar-empty">
             <b>Nothing here</b>
-            <span>No tables or views in “{current}”.</span>
+            <span>{isKafka ? "This cluster has no topics you can see." : `No tables or views in “${current}”.`}</span>
           </div>
         ) : null}
         {treeRows.length > 0 ? (
@@ -233,7 +262,7 @@ export function SchemaPanel({ connection, state, onLoad, onInsert, onSelectAll, 
           <>
             <ClockIcon size={12} />
             <span>
-              {state.loading ? (state.columnsLoading ? "Reading columns…" : state.cached ? "Refreshing…" : "Reading…") : `Loaded ${relativeTime(schema.loadedAt)}`} · {connection.database || connection.host}
+              {state.loading ? (state.columnsLoading ? "Reading columns…" : state.cached ? "Refreshing…" : "Reading…") : `Loaded ${relativeTime(schema.loadedAt)}`} · {(!isKafka && connection.database) || connection.host.split(",")[0]}
             </span>
           </>
         ) : (

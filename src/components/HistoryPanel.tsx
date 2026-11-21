@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { displayText } from "../lib/kafka";
 import { dayLabel, formatDuration, timeLabel, type HistoryEntry } from "../lib/history";
 import type { Connection } from "../types/app";
 import { CheckIcon, EditIcon, InfoIcon, PlayIcon, SaveIcon, SearchIcon, StopIcon, WarningIcon } from "./icons";
@@ -35,7 +36,7 @@ export function HistoryPanel(props: HistoryPanelProps) {
           (filter === "errors" && entry.status === "error") ||
           (filter === "connection" && entry.connectionId === props.activeConnectionId) ||
           (filter === "saved" && props.savedTexts.has(normalizeSql(entry.sql)))) &&
-        (!q || entry.sql.toLowerCase().includes(q) || (entry.error ?? "").toLowerCase().includes(q)),
+        (!q || displayText(entry.sql).toLowerCase().includes(q) || (entry.error ?? "").toLowerCase().includes(q)),
     );
   }, [props.entries, props.activeConnectionId, props.savedTexts, filter, query]);
 
@@ -75,7 +76,7 @@ export function HistoryPanel(props: HistoryPanelProps) {
               <div className={`h-item ${props.activeEntryId === entry.id ? "active" : ""}`} onClick={() => props.onRestore(entry)} role="button" tabIndex={0} onKeyDown={(event) => event.key === "Enter" && props.onRestore(entry)}>
                 <div className={`h-status ${entry.status}`}>{STATUS_ICON[entry.status]}</div>
                 <div className="h-main">
-                  <div className="h-sql">{entry.sql}</div>
+                  <div className="h-sql">{displayText(entry.sql)}</div>
                   {entry.error ? <div className="h-err">{entry.error.split("\n")[0]}</div> : null}
                   <div className="h-meta">
                     <span className="h-conn">{nameOf(entry)}</span>

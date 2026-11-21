@@ -64,6 +64,29 @@ impl PgHosts<'_> {
 pub enum DbType {
     Postgres,
     Clickhouse,
+    Kafka,
+}
+
+/// Kafka only: how a connection with a user name logs in (SASL). Without a user name there is no login.
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SaslMechanism {
+    #[serde(rename = "plain")]
+    Plain,
+    #[serde(rename = "scram-sha-256")]
+    ScramSha256,
+    #[default]
+    #[serde(rename = "scram-sha-512")]
+    ScramSha512,
+}
+
+impl SaslMechanism {
+    pub fn label(self) -> &'static str {
+        match self {
+            SaslMechanism::Plain => "PLAIN",
+            SaslMechanism::ScramSha256 => "SCRAM-SHA-256",
+            SaslMechanism::ScramSha512 => "SCRAM-SHA-512",
+        }
+    }
 }
 
 /// Connection as persisted by the frontend. The password is never part of it, it is
@@ -95,6 +118,9 @@ pub struct ConnectionParams {
     /// Postgres only; "any" for connections saved before multi-host support.
     #[serde(default)]
     pub target_session_attrs: TargetSessionAttrs,
+    /// Kafka only; used when username is set.
+    #[serde(default)]
+    pub sasl_mechanism: SaslMechanism,
 }
 
 impl ConnectionParams {
@@ -141,6 +167,16 @@ impl ConnectionParams {
             ));
         }
         Ok(PgHosts { hosts, ports })
+    }
+
+    /// Kafka bootstrap brokers as host:port, from the same host and port fields as a Postgres host list.
+    pub fn kafka_brokers(&self) -> Result<Vec<String>, String> {
+        Ok(self
+            .pg_hosts()?
+            .endpoints()
+            .into_iter()
+            .map(|(host, port)| format!("{host}:{port}"))
+            .collect())
     }
 }
 
@@ -234,6 +270,21 @@ mod tests {
         .unwrap();
         assert_eq!(c.target_session_attrs, TargetSessionAttrs::ReadWrite);
         assert_eq!(c.target_session_attrs.libpq_name(), "read-write");
+    }
+
+    #[test]
+    fn kafka_brokers_come_from_the_host_list() {
+        let mut c = conn("k1, k2", "9092");
+        c.db_type = DbType::Kafka;
+        assert_eq!(c.kafka_brokers().unwrap(), vec!["k1:9092", "k2:9092"]);
+        assert_eq!(c.sasl_mechanism, SaslMechanism::ScramSha512);
+        let c: ConnectionParams = serde_json::from_value(serde_json::json!({
+            "id": "t", "host": "h", "port": "1", "username": "", "database": "", "db_type": "kafka",
+            "sasl_mechanism": "scram-sha-256",
+        }))
+        .unwrap();
+        assert_eq!(c.db_type, DbType::Kafka);
+        assert_eq!(c.sasl_mechanism, SaslMechanism::ScramSha256);
     }
 
     #[test]

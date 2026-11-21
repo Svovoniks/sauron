@@ -32,6 +32,7 @@ const conn = (id: string): Connection => ({
   ssl_key: "",
   use_default_certs: false,
   target_session_attrs: "any",
+  sasl_mechanism: "scram-sha-512",
 });
 const query = (id: string) => ({ id, name: id, query: `select '${id}'` });
 

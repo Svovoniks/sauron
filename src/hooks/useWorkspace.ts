@@ -2,6 +2,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import { cancelQuery, CANCELLED_MESSAGE, executeMetaCommand, executeScript, isMetaCommand } from "../lib/db/query";
 import { statementLabel } from "../lib/sql/analyze";
 import { splitSqlRanges } from "../lib/sql/splitStatements";
+import { isKafkaText, parseKafkaForm } from "../lib/kafka";
 import { isDirty, newTab, normalizeSession, serializeSession, sortPinned } from "../lib/workspace";
 import { readJsonFile, writeFileText } from "../lib/fileStore";
 import type { Connection, QueryResult, StatementOutcome } from "../types/app";
@@ -40,7 +41,7 @@ export interface RunSummary {
 const CONNECTION_FAILURE = /HTTP 40[13]|username and password|error connecting|connection refused|connection reset|broken pipe|could not connect|timed out|no such host|failed to lookup|dns error|network is unreachable|connection closed|unexpected eof|error sending request|tcp connect/i;
 export const looksLikeConnectionFailure = (message: string) => CONNECTION_FAILURE.test(message);
 
-const labelOf = (outcome: StatementOutcome) => statementLabel(outcome.sql);
+const labelOf = (outcome: StatementOutcome) => (isKafkaText(outcome.sql) ? (parseKafkaForm(outcome.sql)?.mode ?? "kafka") : statementLabel(outcome.sql));
 
 function summarize(request: RunRequest, sets: ResultSet[], ms: number, error: string | null, cancelled: boolean): RunSummary {
   const failedSet = sets.find((set) => set.error);
@@ -202,7 +203,7 @@ export function useWorkspace(options: Options) {
   const duplicateTab = useCallback((id: string) => {
     const source = tabsRef.current.find((t) => t.id === id);
     if (!source) return;
-    const copy = newTab({ name: `${source.name} copy`, connectionId: source.connectionId, sql: source.sql }, tabsRef.current);
+    const copy = newTab({ name: `${source.name} copy`, connectionId: source.connectionId, sql: source.sql, kafka: source.kafka }, tabsRef.current);
     setTabs((current) => {
       const index = current.findIndex((t) => t.id === id);
       return [...current.slice(0, index + 1), copy, ...current.slice(index + 1)];
@@ -289,7 +290,8 @@ export function useWorkspace(options: Options) {
         return true;
       }
 
-      const ranges = splitSqlRanges(request.text, connection.db_type);
+      // A Kafka form is one "statement": the whole text.
+      const ranges = connection.db_type === "kafka" ? [{ text: request.text, start: 0 }] : splitSqlRanges(request.text, connection.db_type);
       if (ranges.length === 0) {
         fail(new Error("No SQL statement to execute."));
         return true;

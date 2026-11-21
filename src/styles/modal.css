@@ -13,7 +13,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  width: 50%;
+  width: calc(100% / 3);
   height: 100%;
   background: var(--accent);
   border-radius: calc(10px * var(--rs));
@@ -23,6 +23,10 @@
 
 .db-type-switch.clickhouse::before {
   transform: translateX(100%);
+}
+
+.db-type-switch.kafka::before {
+  transform: translateX(200%);
 }
 
 .db-type-switch button {

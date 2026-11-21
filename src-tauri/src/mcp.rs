@@ -9,6 +9,9 @@
 //! session is read-only on the server (`default_transaction_read_only` / ClickHouse `readonly`), and on Postgres the
 //! statement runs inside `BEGIN READ ONLY ... ROLLBACK`, which a `set_config(...)` cannot switch off.
 //!
+//! Kafka connections have no SQL: read_messages and send_message take the fields of the app's Kafka form, and
+//! send_message follows the same rule as a SQL write (--allow-writes, and never on read-only or prod connections).
+//!
 //! Every tool call is written to the agent log (`agent_log.rs`), which the app shows in its Agent tab.
 
 use std::collections::HashMap;
@@ -22,7 +25,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::cancel::Registry;
 use crate::model::{ConnectionParams, DbType, StatementOutcome, TargetSessionAttrs};
 use crate::agent_log::{self, Entry, Table};
-use crate::{clickhouse, meta, postgres, secrets};
+use crate::{clickhouse, kafka, meta, postgres, secrets};
 
 /// Must match `identifier` in tauri.conf.json: Tauri's app data dir is `<OS data dir>/<identifier>`.
 const APP_IDENTIFIER: &str = "com.svovoniks.sauron";
@@ -204,7 +207,9 @@ impl Server {
             "instructions": format!(
                 "Sauron runs SQL against the Postgres and ClickHouse connections saved in the Sauron app. \
                  Call list_connections first, then list_tables / describe_table to learn the schema, then query. \
-                 Run one statement per query call and keep results small with LIMIT. {access}"
+                 Run one statement per query call and keep results small with LIMIT. \
+                 Kafka connections have no SQL: list_tables lists their topics, describe_table shows a topic's partitions \
+                 and newest messages, read_messages reads messages and send_message sends one. {access}"
             ),
         })
     }
@@ -233,6 +238,8 @@ impl Server {
             "list_connections" => self.list_connections().await,
             "query" => self.query(&args, &registry, &mut activity).await,
             "list_tables" => self.list_tables(&args, &registry, &mut activity).await,
+            "read_messages" => self.read_messages(&args, &registry, &mut activity).await,
+            "send_message" => self.send_message(&args, &registry, &mut activity).await,
             _ => self.describe_table(&args, &registry, &mut activity).await,
         };
         self.running.lock().unwrap().remove(&key);
@@ -311,7 +318,7 @@ impl Server {
                 let mut entry = json!({
                     "name": c.label(),
                     "id": c.params.id,
-                    "type": match c.params.db_type { DbType::Postgres => "postgres", DbType::Clickhouse => "clickhouse" },
+                    "type": match c.params.db_type { DbType::Postgres => "postgres", DbType::Clickhouse => "clickhouse", DbType::Kafka => "kafka" },
                     "host": c.params.host,
                     "port": c.params.port,
                     "database": c.params.database,
@@ -338,6 +345,9 @@ impl Server {
     async fn query(&self, args: &Value, registry: &Registry, activity: &mut Activity) -> Result<String, String> {
         let saved = self.connection(args).await?;
         activity.connection(&saved);
+        if saved.params.db_type == DbType::Kafka {
+            return Err(format!("\"{}\" is a Kafka connection: use read_messages and send_message instead of SQL.", saved.label()));
+        }
         let sql = string_arg(args, "sql")?;
         let sql = sql.trim().trim_end_matches(';').trim_end();
         activity.sql = sql.to_string();
@@ -394,6 +404,11 @@ impl Server {
                 let outcome = run_sql(&saved, &activity.sql, MAX_ROWS, false, registry).await?;
                 reply(outcome, activity)
             }
+            DbType::Kafka => {
+                activity.sql = kafka::form_text("topics", "", json!({}), json!({}));
+                let outcome = run_kafka(&saved, &activity.sql, MAX_ROWS * 10, false, registry).await?;
+                reply(outcome, activity)
+            }
         }
     }
 
@@ -416,7 +431,82 @@ impl Server {
                 let outcome = run_sql(&saved, &activity.sql, MAX_ROWS, false, registry).await?;
                 reply(outcome, activity)
             }
+            DbType::Kafka => {
+                // The partitions, then a few messages so the agent sees what the values look like.
+                activity.sql = kafka::form_text("describe", &table, json!({}), json!({}));
+                let partitions = reply(run_kafka(&saved, &activity.sql, MAX_ROWS, false, registry).await?, activity)?;
+                let newest = kafka::form_text("read", &table, json!({ "from": "newest" }), json!({}));
+                let sample = reply(run_kafka(&saved, &newest, 3, false, registry).await?, &mut Activity::default())?;
+                Ok(format!("Partitions:\n{partitions}\n\nNewest messages:\n{sample}"))
+            }
         }
+    }
+
+    async fn read_messages(&self, args: &Value, registry: &Registry, activity: &mut Activity) -> Result<String, String> {
+        let saved = self.kafka_connection(args).await?;
+        activity.connection(&saved);
+        let topic = string_arg(args, "topic")?;
+        let read = read_form(args)?;
+        activity.sql = kafka::form_text("read", &topic, read, json!({}));
+        let max_rows = args
+            .get("max_rows")
+            .and_then(Value::as_u64)
+            .map_or(DEFAULT_MAX_ROWS, |n| n as usize)
+            .clamp(1, MAX_ROWS);
+        let outcome = run_kafka(&saved, &activity.sql, max_rows, false, registry).await?;
+        reply(outcome, activity)
+    }
+
+    async fn send_message(&self, args: &Value, registry: &Registry, activity: &mut Activity) -> Result<String, String> {
+        let saved = self.kafka_connection(args).await?;
+        activity.connection(&saved);
+        let topic = string_arg(args, "topic")?;
+        let headers: Vec<Value> = args
+            .get("headers")
+            .and_then(Value::as_object)
+            .map(|map| {
+                map.iter()
+                    .map(|(name, value)| json!({ "name": name, "value": value.as_str().map_or_else(|| value.to_string(), str::to_string) }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let value = match args.get("value") {
+            Some(Value::String(text)) => text.clone(),
+            Some(other) => other.to_string(),
+            None => return Err("Missing argument: value".to_string()),
+        };
+        let partition = args.get("partition").and_then(Value::as_i64);
+        let send = json!({
+            "key": optional_arg(args, "key").unwrap_or_default(),
+            "value": value,
+            "headers": headers,
+            "partitioner": if partition.is_some() { "manual".to_string() } else { optional_arg(args, "partitioner").unwrap_or_else(|| "fnv".to_string()) },
+            "partition": partition.unwrap_or(0),
+        });
+        activity.sql = kafka::form_text("send", &topic, json!({}), send);
+        let writable = saved.writable(self.allow_writes);
+        if !writable {
+            activity.blocked = true;
+            return Err(format!(
+                "\"{}\" is read-only for agents, so messages cannot be sent. {}",
+                saved.label(),
+                if self.allow_writes {
+                    "The connection is marked read-only or prod in the Sauron app."
+                } else {
+                    "Start the MCP server with --allow-writes to allow sending on connections that are not read-only or prod."
+                }
+            ));
+        }
+        let outcome = run_kafka(&saved, &activity.sql, 1, true, registry).await?;
+        reply(outcome, activity)
+    }
+
+    async fn kafka_connection(&self, args: &Value) -> Result<Saved, String> {
+        let saved = self.connection(args).await?;
+        if saved.params.db_type != DbType::Kafka {
+            return Err(format!("\"{}\" is not a Kafka connection: use query.", saved.label()));
+        }
+        Ok(saved)
     }
 }
 
@@ -457,6 +547,7 @@ async fn run_sql(
     let outcomes = match params.db_type {
         DbType::Postgres => postgres::execute_script(&params, &password, &statements, max_rows, &guard).await?,
         DbType::Clickhouse => clickhouse::execute_script(&params, &password, &statements, max_rows, &guard).await?,
+        DbType::Kafka => return Err("Kafka connections have no SQL: use read_messages and send_message.".to_string()),
     };
     let mut outcomes = outcomes.into_iter();
     if read_only_transaction {
@@ -467,6 +558,45 @@ async fn run_sql(
         }
     }
     outcomes.next().ok_or_else(|| "The statement did not run".to_string())
+}
+
+async fn run_kafka(saved: &Saved, form: &str, max_rows: usize, writable: bool, registry: &Registry) -> Result<StatementOutcome, String> {
+    let params = session_params(saved, writable);
+    let guard = registry.begin();
+    let password = password(&params.id).await?;
+    let mut outcomes = kafka::execute_script(&params, &password, &[form.to_string()], max_rows, &guard).await?;
+    outcomes.pop().ok_or_else(|| "Nothing ran".to_string())
+}
+
+/// read_messages arguments as the Kafka form's read part.
+fn read_form(args: &Value) -> Result<Value, String> {
+    let time = |key: &str| -> Result<Option<i64>, String> {
+        match optional_arg(args, key) {
+            None => Ok(None),
+            Some(text) => chrono::DateTime::parse_from_rfc3339(&text)
+                .map(|t| Some(t.timestamp_millis()))
+                .map_err(|_| format!("{key} must be an RFC 3339 time like 2026-11-20T10:00:00Z, got \"{text}\"")),
+        }
+    };
+    let (since, until) = (time("since")?, time("until")?);
+    let range = optional_arg(args, "range");
+    let from = match optional_arg(args, "from") {
+        Some(from) => from,
+        None if since.is_some() || until.is_some() || range.is_some() => "time".to_string(),
+        None if args.get("offset").is_some() => "offset".to_string(),
+        None => "newest".to_string(),
+    };
+    let filters = args.get("filters").cloned().unwrap_or_else(|| json!([]));
+    Ok(json!({
+        "from": from,
+        "range": if since.is_some() || until.is_some() { "custom".to_string() } else { range.unwrap_or_else(|| "24h".to_string()) },
+        "sinceMs": since,
+        "untilMs": until,
+        "partitions": args.get("partitions").cloned().unwrap_or_else(|| json!([])),
+        "offsetPartition": args.get("partition").and_then(Value::as_i64).unwrap_or(0),
+        "offset": args.get("offset").and_then(Value::as_i64).unwrap_or(0),
+        "filters": filters,
+    }))
 }
 
 async fn run_meta(saved: &Saved, command: &str, registry: &Registry) -> Result<String, String> {
@@ -597,6 +727,60 @@ fn tools() -> Vec<Value> {
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": true, "openWorldHint": false },
         }),
+        json!({
+            "name": "read_messages",
+            "title": "Read Kafka messages",
+            "description": "Read messages of a topic on a Kafka connection, newest first unless from is oldest or offset. Never joins a consumer group or commits offsets. Rows are partition, offset, timestamp, key, value (the message text, usually JSON) and headers. Filters are checked on every message read, so narrow a search with a time range.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "connection": connection,
+                    "topic": { "type": "string" },
+                    "from": { "type": "string", "enum": ["newest", "oldest", "time", "offset", "timestamp"], "description": "Where to start (default newest; time when since, until or range is given; offset when offset is given). time reads a window newest first; timestamp reads every partition forwards from the first message at or after since" },
+                    "range": { "type": "string", "enum": ["15m", "1h", "6h", "24h", "7d"], "description": "Time window back from now (from = time)" },
+                    "since": { "type": "string", "description": "RFC 3339 start of the time window, or the time to start from for from = timestamp" },
+                    "until": { "type": "string", "description": "RFC 3339 end of the time window" },
+                    "partitions": { "type": "array", "items": { "type": "integer" }, "description": "Only these partitions (default all)" },
+                    "partition": { "type": "integer", "description": "The partition for from = offset" },
+                    "offset": { "type": "integer", "description": "The first offset for from = offset" },
+                    "filters": {
+                        "type": "array",
+                        "description": "All must match. field: key, value (the whole text), value.a.b.0 (a JSON field; numbers index arrays) or header.name",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "field": { "type": "string" },
+                                "op": { "type": "string", "enum": ["eq", "ne", "contains", "not_contains", "exists", "gt", "lt"] },
+                                "value": { "type": "string" },
+                            },
+                            "required": ["field", "op"],
+                        },
+                    },
+                    "max_rows": { "type": "integer", "minimum": 1, "maximum": MAX_ROWS, "description": format!("Messages to return (default {DEFAULT_MAX_ROWS}, at most {MAX_ROWS})") },
+                },
+                "required": ["connection", "topic"],
+            },
+            "annotations": read_only,
+        }),
+        json!({
+            "name": "send_message",
+            "title": "Send a Kafka message",
+            "description": "Send one message to an existing topic of a Kafka connection. Needs --allow-writes and a connection that is not read-only or prod. Without a partition, a keyed message goes to the partition its key hashes to (partitioner fnv, the sarama default, or murmur2, the Java default) and a message without a key to a random one.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "connection": connection,
+                    "topic": { "type": "string" },
+                    "key": { "type": "string" },
+                    "value": { "description": "The message: a string is sent as is, anything else as JSON" },
+                    "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+                    "partition": { "type": "integer", "description": "Send to this partition instead of hashing the key" },
+                    "partitioner": { "type": "string", "enum": ["fnv", "murmur2"] },
+                },
+                "required": ["connection", "topic", "value"],
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
+        }),
     ]
 }
 
@@ -637,6 +821,48 @@ mod tests {
     }
 
     #[test]
+    fn read_messages_arguments_become_the_read_form() {
+        let form = read_form(&json!({ "range": "1h", "filters": [{ "field": "key", "op": "eq", "value": "k" }] })).unwrap();
+        assert_eq!(form["from"], "time");
+        assert_eq!(form["range"], "1h");
+        assert_eq!(form["filters"][0]["field"], "key");
+        let form = read_form(&json!({ "since": "2026-11-20T10:00:00Z" })).unwrap();
+        assert_eq!(form["range"], "custom");
+        assert_eq!(form["sinceMs"], 1_795_168_800_000i64);
+        assert_eq!(read_form(&json!({ "partition": 2, "offset": 5 })).unwrap()["from"], "offset");
+        let form = read_form(&json!({ "from": "timestamp", "since": "2026-11-20T10:00:00Z" })).unwrap();
+        assert_eq!(form["from"], "timestamp");
+        assert_eq!(form["sinceMs"], 1_795_168_800_000i64);
+        assert_eq!(read_form(&json!({})).unwrap()["from"], "newest");
+        assert!(read_form(&json!({ "since": "yesterday" })).is_err());
+    }
+
+    #[tokio::test]
+    async fn kafka_sends_follow_the_write_rules() {
+        let s = server(true);
+        std::fs::create_dir_all(&s.data_dir).unwrap();
+        let file = json!({ "version": 1, "connections": [
+            { "id": "k1", "name": "Bus", "host": "127.0.0.1", "port": "1", "username": "", "database": "", "db_type": "kafka", "read_only": true },
+            { "id": "k2", "name": "Bus prod", "host": "127.0.0.1", "port": "1", "username": "", "database": "", "db_type": "kafka", "env": "prod" },
+        ] });
+        std::fs::write(s.data_dir.join("connections.json"), file.to_string()).unwrap();
+        let registry = Registry::default();
+        for name in ["Bus", "Bus prod"] {
+            let mut activity = Activity::default();
+            let refused = s.send_message(&json!({ "connection": name, "topic": "t", "value": "{}" }), &registry, &mut activity).await;
+            assert!(refused.unwrap_err().contains("read-only for agents"));
+            assert!(activity.blocked);
+            assert!(activity.sql.contains("\"mode\":\"send\""));
+        }
+        let mut activity = Activity::default();
+        let sql = s.query(&json!({ "connection": "Bus", "sql": "select 1" }), &registry, &mut activity).await;
+        assert!(sql.unwrap_err().contains("Kafka connection"));
+        let list: Value = serde_json::from_str(&s.list_connections().await.unwrap()).unwrap();
+        assert_eq!(list[0]["type"], "kafka");
+        let _ = std::fs::remove_dir_all(&s.data_dir);
+    }
+
+    #[test]
     fn pg_patterns_are_quoted_only_when_needed() {
         assert_eq!(quote_pg_pattern("public.users"), "public.users");
         assert_eq!(quote_pg_pattern("Orders"), "\"Orders\"");
@@ -673,7 +899,7 @@ mod tests {
         let s = server(false);
         let response = s.handle(json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/list" })).await.unwrap();
         let names: Vec<&str> = response["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["list_connections", "list_tables", "describe_table", "query"]);
+        assert_eq!(names, ["list_connections", "list_tables", "describe_table", "query", "read_messages", "send_message"]);
 
         let response = s
             .handle(json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "drop_everything" } }))

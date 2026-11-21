@@ -30,6 +30,7 @@ const fullConn: Connection = {
   ssl_key: "",
   use_default_certs: false,
   target_session_attrs: "any",
+  sasl_mechanism: "scram-sha-512",
 };
 
 describe("normalizeConnection", () => {
@@ -638,6 +639,7 @@ describe("normalizeBackup", () => {
       ssl_key: "",
       use_default_certs: false,
       target_session_attrs: "any",
+      sasl_mechanism: "scram-sha-512",
     });
     expect(b.results.ch![0]!.rows).toEqual([[null, '{"c":1}']]);
   });

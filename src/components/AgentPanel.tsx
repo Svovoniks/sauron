@@ -97,8 +97,8 @@ export function AgentPanel(props: AgentPanelProps) {
                 </div>
                 {entry.sql ? (
                   <div className="h-actions">
-                    {entry.tool === "query" ? (
-                      <button aria-label="Open in a new tab" onClick={(event) => { event.stopPropagation(); props.onEdit(entry); }} title="Open the SQL in a new tab" type="button">
+                    {entry.tool === "query" || entry.tool === "read_messages" || entry.tool === "send_message" ? (
+                      <button aria-label="Open in a new tab" onClick={(event) => { event.stopPropagation(); props.onEdit(entry); }} title={entry.tool === "query" ? "Open the SQL in a new tab" : "Open the form in a new tab"} type="button">
                         <EditIcon />
                       </button>
                     ) : null}

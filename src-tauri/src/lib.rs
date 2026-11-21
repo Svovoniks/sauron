@@ -2,6 +2,7 @@ mod agent_log;
 mod cancel;
 mod clickhouse;
 mod client_cert;
+mod kafka;
 mod mcp;
 mod meta;
 mod model;
@@ -36,6 +37,17 @@ async fn execute_query(
     match connection.db_type {
         DbType::Postgres => postgres::execute(&connection, &password, &statements, row_limit, &guard).await,
         DbType::Clickhouse => clickhouse::execute(&connection, &password, &statements, row_limit, &guard).await,
+        DbType::Kafka => {
+            let mut outcomes = kafka::execute_script(&connection, &password, &statements, row_limit, &guard).await?;
+            match outcomes.pop() {
+                Some(outcome) => match (outcome.result, outcome.error) {
+                    (Some(result), _) => Ok(result),
+                    (_, Some(error)) => Err(error.message),
+                    _ => Err("Nothing to run".to_string()),
+                },
+                None => Err("Nothing to run".to_string()),
+            }
+        }
     }
 }
 
@@ -63,6 +75,7 @@ async fn execute_script(
     match connection.db_type {
         DbType::Postgres => postgres::execute_script(&connection, &password, &statements, row_limit, &guard).await,
         DbType::Clickhouse => clickhouse::execute_script(&connection, &password, &statements, row_limit, &guard).await,
+        DbType::Kafka => kafka::execute_script(&connection, &password, &statements, row_limit, &guard).await,
     }
 }
 
@@ -104,7 +117,10 @@ async fn execute_meta_command(
     run_id: Option<String>,
 ) -> Result<meta::MetaOutput, String> {
     if connection.db_type != DbType::Postgres {
-        return Err("Backslash commands are only available for Postgres connections. For ClickHouse use SHOW DATABASES, SHOW TABLES, DESCRIBE TABLE <name>.".to_string());
+        return Err(match connection.db_type {
+            DbType::Kafka => "Backslash commands are only available for Postgres connections.".to_string(),
+            _ => "Backslash commands are only available for Postgres connections. For ClickHouse use SHOW DATABASES, SHOW TABLES, DESCRIBE TABLE <name>.".to_string(),
+        });
     }
     let run = runs.start(run_id);
     let guard = run.registry().begin();

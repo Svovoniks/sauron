@@ -6,6 +6,7 @@ import {
   type DbType,
   type Env,
   ENVS,
+  type SaslMechanism,
   type SavedQuery,
   type SavedResult,
   type SslMode,
@@ -25,7 +26,8 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const uuid = () => crypto.randomUUID();
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const idOrNew = (v: unknown): string => (str(v).trim() === "" || DANGEROUS_KEYS.has(str(v)) ? uuid() : str(v));
-const DB_TYPES: readonly string[] = ["postgres", "clickhouse"];
+const DB_TYPES: readonly string[] = ["postgres", "clickhouse", "kafka"];
+const SASL: readonly string[] = ["plain", "scram-sha-256", "scram-sha-512"];
 const SSL_MODES: readonly string[] = ["disable", "prefer", "require", "verify-ca", "verify"];
 
 const isDbType = (v: unknown): v is DbType => typeof v === "string" && DB_TYPES.includes(v);
@@ -52,6 +54,8 @@ export function normalizeConnection(raw: unknown): { connection: Connection; leg
     ssl_mode = raw.ssl_mode;
   } else if (db_type === "postgres") {
     ssl_mode = "prefer";
+  } else if (db_type === "kafka") {
+    ssl_mode = "disable";
   } else {
     ssl_mode = hadHttps ? "verify" : "disable";
   }
@@ -81,6 +85,7 @@ export function normalizeConnection(raw: unknown): { connection: Connection; leg
     ssl_key: str(raw.ssl_key).trim(),
     use_default_certs: raw.use_default_certs === true,
     target_session_attrs: isTargetSessionAttrs(raw.target_session_attrs) ? raw.target_session_attrs : "any",
+    sasl_mechanism: typeof raw.sasl_mechanism === "string" && SASL.includes(raw.sasl_mechanism) ? (raw.sasl_mechanism as SaslMechanism) : "scram-sha-512",
   };
 
   const legacyPassword = typeof raw.password === "string" && raw.password !== "" ? raw.password : null;

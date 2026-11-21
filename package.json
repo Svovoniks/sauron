@@ -1,7 +1,7 @@
 {
   "name": "sauron",
-  "version": "0.4.21",
-  "description": "Desktop client for searching Postgres and ClickHouse databases",
+  "version": "0.5.0",
+  "description": "Desktop client for searching Postgres and ClickHouse databases and Kafka topics",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

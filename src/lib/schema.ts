@@ -1,8 +1,12 @@
 import type { Cell, DbType, StatementOutcome } from "../types/app";
+import { serializeKafkaForm, emptyKafkaForm } from "./kafka";
 
 /** What the schema explorer and the editor's autocomplete know about a database. */
 
-export type ObjectKind = "table" | "view" | "matview" | "foreign";
+export type ObjectKind = "table" | "view" | "matview" | "foreign" | "topic";
+
+/** Kafka topics are listed under this one schema. */
+export const KAFKA_SCHEMA = "topics";
 export type ColumnKey = "pk" | "fk" | "";
 
 export interface SchemaColumn {
@@ -16,7 +20,7 @@ export interface SchemaTable {
   schema: string;
   name: string;
   kind: ObjectKind;
-  /** Planner estimate, null when unknown. */
+  /** Planner estimate, null when unknown. Kafka: the number of partitions. */
   rows: number | null;
   bytes: number | null;
   columns: SchemaColumn[];
@@ -46,6 +50,7 @@ const CH_SYSTEM = `('system','INFORMATION_SCHEMA','information_schema')`;
  * `pg_total_relation_size` for every table was the slowest part and the row estimate is enough to judge a table.
  */
 export function schemaQueries(dbType: DbType): string[] {
+  if (dbType === "kafka") return [serializeKafkaForm({ ...emptyKafkaForm(), mode: "topics" })];
   if (dbType === "clickhouse") {
     return [
       `select database, name, engine, total_rows, total_bytes from system.tables where database not in ${CH_SYSTEM} order by database, name`,
@@ -75,7 +80,11 @@ export function buildSchema(dbType: DbType, outcomes: StatementOutcome[], now = 
   const tables: SchemaTable[] = [];
   const keyOf = (schema: Cell | undefined, name: Cell | undefined) => `${schema}\u0000${name}`;
 
-  if (dbType === "postgres") {
+  if (dbType === "kafka") {
+    for (const [name, partitions] of rowsOf(outcomes[0])) {
+      if (name !== null) tables.push({ schema: KAFKA_SCHEMA, name, kind: "topic", rows: num(partitions), bytes: null, columns: [] });
+    }
+  } else if (dbType === "postgres") {
     const KIND: Record<string, ObjectKind> = { r: "table", p: "table", v: "view", m: "matview", f: "foreign" };
     for (const [schema, name, relkind, tuples, bytes] of rowsOf(outcomes[0])) {
       if (schema === null || name === null) continue;

@@ -17,7 +17,7 @@ export function Welcome({ shortcuts, onConnect, onImport }: WelcomeProps) {
         </div>
         <div>
           <h1>Welcome to Sauron</h1>
-          <p>Search Postgres and ClickHouse quickly and safely. Connections are read-only by default.</p>
+          <p>Search Postgres, ClickHouse and Kafka quickly and safely. Connections are read-only by default.</p>
         </div>
         <div className="choices">
           <button className="choice main" onClick={onConnect} type="button">

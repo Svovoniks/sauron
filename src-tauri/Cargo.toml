@@ -1,6 +1,6 @@
 [package]
 name = "sauron"
-version = "0.4.21"
+version = "0.5.0"
 description = "database query app"
 authors = ["svovoniks"]
 edition = "2021"
@@ -34,6 +34,9 @@ tauri-plugin-updater = "~2.9"
 dirs = "6"
 # rewrapping client keys into PKCS#8 for native-tls (see src/client_cert.rs)
 base64 = "0.22"
+# Kafka connections: pure Rust client, plaintext or SASL (see src/kafka.rs)
+rskafka = "0.6"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 # macOS keeps passwords in an encrypted file instead of the keychain (see src/secrets/vault.rs)
 [target.'cfg(target_os = "macos")'.dependencies]

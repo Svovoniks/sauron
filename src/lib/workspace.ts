@@ -1,5 +1,6 @@
 import type { Connection } from "../types/app";
 import type { QueryTab } from "../types/workspace";
+import { isKafkaText } from "./kafka";
 
 /** Pure helpers for query tabs. */
 
@@ -12,6 +13,7 @@ export const newTab = (init: Partial<QueryTab> = {}, existing: QueryTab[] = []):
   name: init.name ?? nextUntitledName(existing),
   connectionId: null,
   sql: "",
+  kafka: "",
   savedQueryId: null,
   savedScope: null,
   pinned: false,
@@ -46,6 +48,7 @@ export function normalizeSession(raw: unknown, connections: Connection[]): Sessi
       name: typeof item.name === "string" && item.name.trim() ? item.name.slice(0, 80) : "untitled",
       connectionId: typeof item.connectionId === "string" && known.has(item.connectionId) ? item.connectionId : null,
       sql: item.sql.slice(0, MAX_TAB_SQL),
+      kafka: typeof item.kafka === "string" && isKafkaText(item.kafka) ? item.kafka.slice(0, MAX_TAB_SQL) : "",
       savedQueryId: typeof item.savedQueryId === "string" ? item.savedQueryId : null,
       savedScope: typeof item.savedScope === "string" ? item.savedScope : null,
       pinned: item.pinned === true,
@@ -72,6 +75,6 @@ export function neighbourAfterClose(tabs: QueryTab[], closedId: string): string 
 
 /** Does the tab differ from the saved query it came from (or, for scratch tabs, hold anything at all)? */
 export function isDirty(tab: QueryTab, savedText: string | null): boolean {
-  if (tab.savedQueryId) return savedText !== null && savedText !== tab.sql;
+  if (tab.savedQueryId) return savedText !== null && savedText !== (isKafkaText(savedText) ? tab.kafka : tab.sql);
   return false;
 }

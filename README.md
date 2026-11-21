@@ -4,7 +4,7 @@
 
 ## What is this app?
 
-Sauron is an app for searching the database (currently only Postgres and ClickHouse are supported) so mostly just running selects and showing results in a pretty format
+Sauron is an app for searching the database (Postgres and ClickHouse, plus Kafka topics) so mostly just running selects and showing results in a pretty format
 
 ## Run on Mac
  - install the app (drag it to Applications)
@@ -47,6 +47,24 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
  - **Errors point at the problem**: the failing statement is underlined in the editor, with the SQLSTATE, a caret snippet, "did you mean ...?" for
    a mistyped table or column, and timeout / disconnect / read-only explanations with the next step. `Cmd/Ctrl+.` cancels a running query
 
+## Kafka
+ - **New connection → Kafka**: one or more brokers (one is enough, the rest of the cluster is found through it), and an optional user and
+   password (SASL SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN). There is no TLS yet. Test connection checks DNS, TCP, the login and lists the topics
+ - a query tab on a Kafka connection shows a **form instead of the SQL editor**; the tab keeps its SQL, so switching connections loses neither
+ - **Read**: newest, oldest, a time range (15m ... 7d or custom, newest first), **Timestamp** (every partition from the first message at or
+   after a time, oldest first, like Redpanda Console; the field also takes pasted epoch seconds or milliseconds) or one partition from an
+   offset; optionally only some partitions; filters on
+   `key`, `value`, a JSON field (`value.status`, `value.items.0.sku`) or a header (`header.trace-id`) with =, ≠, contains, exists, >, <.
+   Values are shown as JSON (a tree in the record view). Partition, offset and time decide where reading starts; filters are checked on every
+   message read, so a scan stops at the limit, the connection's timeout or 5,000,000 messages and says how far it got
+ - reading **never joins a consumer group and never commits offsets**: partitions are fetched directly, so real consumers are not affected
+ - **Send** (only when the connection is not read-only): key, value, headers, and the partition: by key with FNV-1a (the sarama default),
+   by key with murmur2 (the Java client and franz-go default), or a partition number. A message without a key goes to a random partition.
+   Prod connections ask you to type the name first. **Send again…** in the record view puts a message back into the Send form
+ - the Schema tab lists the topics (internal `__` topics hidden): click one to use it in the form, double-click to read its newest messages,
+   the info button shows partitions with their first and last offsets
+ - history and saved queries store the form, so a read or a send can be repeated
+
 ## AI agents (MCP)
  - Sauron is also an MCP server, so an agent (Claude Code, Cursor, Claude Desktop, ...) can use your saved connections. The agent starts the
    app's own executable with `--mcp`: no window opens, it speaks MCP over stdin / stdout, and the app does not have to be running
@@ -55,6 +73,8 @@ Sauron is an app for searching the database (currently only Postgres and ClickHo
    command and `"args": ["--mcp"]`
  - tools: `list_connections`, `list_tables`, `describe_table` and `query` (one statement, 100 rows by default, at most 1,000). Connections are
    picked by name, and the agent never sees a password
+ - Kafka connections: `list_tables` lists the topics, `describe_table` shows a topic's partitions and newest messages, `read_messages` takes
+   the fields of the Read form and `send_message` sends one message (only with `--allow-writes`, never on read-only or prod connections)
  - **read-only by default**: only SELECT / WITH / SHOW / EXPLAIN / DESCRIBE / VALUES are accepted, the session is read-only on the server, and
    on Postgres every statement runs inside `BEGIN READ ONLY ... ROLLBACK`. Add `--allow-writes` after `--mcp` to let the agent write;
    connections that are read-only or tagged prod stay read-only. A connection without a timeout gets 60 seconds

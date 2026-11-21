@@ -220,7 +220,7 @@ export const settingsSections = (version: string): Section[] => [
     title: "About",
     sub: "",
     rows: [
-      { id: "version", label: `Sauron v${version}`, desc: "Postgres and ClickHouse search client · MIT", control: { type: "button", text: "Check for updates", action: "checkUpdate" } },
+      { id: "version", label: `Sauron v${version}`, desc: "Postgres, ClickHouse and Kafka search client · MIT", control: { type: "button", text: "Check for updates", action: "checkUpdate" } },
     ],
   },
 ];

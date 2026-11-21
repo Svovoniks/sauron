@@ -1,6 +1,7 @@
 /** What AI agents did through `sauron --mcp` (see agent_log.rs). Written by the MCP server, only read and cleared here. */
 
 import type { Cell, ColumnMeta } from "../types/app";
+import { displayText } from "./kafka";
 
 export type AgentStatus = "ok" | "error" | "blocked";
 export type AgentTool = "query" | "list_tables" | "describe_table" | "list_connections";
@@ -39,11 +40,13 @@ export const TOOL_LABEL: Record<string, string> = {
   list_tables: "list tables",
   describe_table: "describe",
   list_connections: "list connections",
+  read_messages: "read messages",
+  send_message: "send message",
 };
 
 /** One line for the list: the SQL, or what the call was about when nothing ran. */
 export const agentSummary = (entry: AgentEntry): string =>
-  entry.sql || (entry.tool === "list_connections" ? "Listed the saved connections" : TOOL_LABEL[entry.tool] ?? entry.tool);
+  (entry.sql ? displayText(entry.sql) : "") || (entry.tool === "list_connections" ? "Listed the saved connections" : TOOL_LABEL[entry.tool] ?? entry.tool);
 
 export function filterAgentEntries(entries: AgentEntry[], filter: AgentFilter, search: string, connectionId: string | null): AgentEntry[] {
   const q = search.trim().toLowerCase();

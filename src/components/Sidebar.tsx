@@ -1,4 +1,5 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { displayText } from "../lib/kafka";
 import type { SavedQuery, SavedResult } from "../types/app";
 import { comboText } from "../lib/settings";
 import { GripIcon, RefreshIcon, TrashIcon } from "./icons";
@@ -223,7 +224,7 @@ export function Sidebar({
                     onStartReorder={(event) => startReorder(event, query.id, "query")}
                     onStopReorder={() => setDraggingItem(null)}
                     overwriteTitle="Overwrite with current query"
-                    preview={query.query.length > 50 ? `${query.query.substring(0, 50)}...` : query.query}
+                    preview={displayText(query.query).length > 50 ? `${displayText(query.query).substring(0, 50)}...` : displayText(query.query)}
                     type="query"
                   />
                 ))

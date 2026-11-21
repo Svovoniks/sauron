@@ -11,7 +11,7 @@ import {
 } from "react";
 import { comboText, matchesCombo, type LoadingAnimation } from "../lib/settings";
 import type { Schema } from "../lib/schema";
-import type { Cell, Connection } from "../types/app";
+import type { Cell, ColumnMeta, Connection } from "../types/app";
 import { MESSAGES, type QueryTab, type ResultSet, type TabRun } from "../types/workspace";
 import { cellText, clipCell } from "../utils/format";
 import { CheckIcon, CloseIcon, InfoIcon, SearchIcon } from "./icons";
@@ -31,6 +31,8 @@ export interface DataViewActions extends ErrorActions {
   onDismissBanner: () => void;
   onRunRestored: () => void;
   onCopyLabelled: (text: string, label: string) => void;
+  /** Kafka: open the Send form filled with a message of the result. */
+  onSendAgain: (columns: ColumnMeta[], row: Cell[]) => void;
 }
 
 interface DataViewProps {
@@ -249,6 +251,7 @@ export function DataView({
   const timeoutSecs = run?.timeoutSecs ?? connection?.timeout_secs ?? 0;
 
   const columns = result?.columns ?? [];
+  const isKafka = connection?.db_type === "kafka";
   const rows = useMemo(() => result?.rows ?? [], [result]);
   const hasColumns = columns.length > 0;
 
@@ -565,21 +568,36 @@ export function DataView({
             </div>
           ) : null}
 
+          {showTable && isKafka && result.message && !isRunning && !result.truncated ? (
+            <div className={`banner ${result.message.startsWith("Stopped") ? "warn" : "subtle"}`} role="status">
+              <InfoIcon size={14} />
+              <span>{result.message}</span>
+            </div>
+          ) : null}
+
           {showTable && result.truncated && !isRunning && (
             <div className="banner warn" role="status">
               <InfoIcon size={14} />
-              <span>
-                <b>Showing the first {rows.length.toLocaleString()} rows.</b> <span className="muted">Search and sorting only see these rows.</span>
-              </span>
+              {isKafka ? (
+                <span>
+                  <b>Showing {rows.length.toLocaleString()} messages, more match.</b> <span className="muted">{result.message}</span>
+                </span>
+              ) : (
+                <span>
+                  <b>Showing the first {rows.length.toLocaleString()} rows.</b> <span className="muted">Search and sorting only see these rows.</span>
+                </span>
+              )}
               <span className="sp" />
               {canLoadMore && (
-                <button className="btn" onClick={actions.onLoadMore} type="button">
+                <button className="btn" onClick={actions.onLoadMore} title={isKafka ? "Read again, keeping ten times as many messages" : undefined} type="button">
                   Load more
                 </button>
               )}
-              <button className="btn ghost" onClick={() => actions.onOpenSettings("results")} type="button">
-                Change limit
-              </button>
+              {isKafka ? null : (
+                <button className="btn ghost" onClick={() => actions.onOpenSettings("results")} type="button">
+                  Change limit
+                </button>
+              )}
             </div>
           )}
 
@@ -605,6 +623,7 @@ export function DataView({
               selectedIndex={selectedIndex}
               tableName={tableName}
               dialect={connection?.db_type ?? "postgres"}
+              onSendAgain={isKafka && columns.some((c) => c.name === "value") && columns.some((c) => c.name === "key") ? (row) => actions.onSendAgain(columns, row) : undefined}
             />
           ) : (
             <div className="detail-placeholder">

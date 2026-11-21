@@ -107,3 +107,13 @@ describe("formatConnectionUrl", () => {
     expect(formatConnectionUrl({ ...base, host: "a,::1", port: "1,2", target_session_attrs: "any" })).toBe("postgresql://u@a:1,[::1]:2/d?sslmode=require");
   });
 });
+
+describe("kafka urls", () => {
+  test("parse and format broker lists", () => {
+    const parsed = parseConnectionUrl("kafka://svc@k1.stg.internal:9092,k2.stg.internal:9093?sasl=scram-sha-256");
+    expect(parsed).toMatchObject({ db_type: "kafka", host: "k1.stg.internal,k2.stg.internal", port: "9092,9093", username: "svc", sasl_mechanism: "scram-sha-256", ssl_mode: "disable", env: "staging" });
+    expect(parseConnectionUrl("kafka://k1")).toMatchObject({ host: "k1", port: "9092" });
+    expect(formatConnectionUrl({ db_type: "kafka", host: "k1,k2", port: "9092", database: "", username: "", ssl_mode: "disable" })).toBe("kafka://k1:9092,k2:9092");
+    expect(formatConnectionUrl({ db_type: "kafka", host: "k1", port: "9092", database: "", username: "u", ssl_mode: "disable", sasl_mechanism: "plain" })).toBe("kafka://u@k1:9092?sasl=plain");
+  });
+});

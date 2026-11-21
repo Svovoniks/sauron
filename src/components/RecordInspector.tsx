@@ -2,10 +2,10 @@ import { useMemo, useState, type ReactNode } from "react";
 import { parsePgArray } from "../lib/pgArray";
 import { embeddedJson, parseTimestamp, rowToInsert, rowToObject, typedValue } from "../lib/record";
 import { relativeTime } from "../lib/sql/analyze";
-import type { Cell, ColumnMeta } from "../types/app";
+import type { Cell, ColumnMeta, DbType } from "../types/app";
 import { cellText, detailValue } from "../utils/format";
 import { JsonView } from "./JsonTree";
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, FilterIcon, SearchIcon } from "./icons";
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, FilterIcon, PlayIcon, SearchIcon } from "./icons";
 
 type Mode = "fields" | "json";
 
@@ -18,7 +18,9 @@ interface RecordInspectorProps {
   prefs: { prettyJson: boolean; nullText: string };
   /** Table the rows came from, for "Copy as INSERT". */
   tableName: string | null;
-  dialect: "postgres" | "clickhouse";
+  dialect: DbType;
+  /** Kafka: open the Send form filled with this message. */
+  onSendAgain?: (row: Cell[]) => void;
   onStep: (delta: number) => void;
   onClose: () => void;
   onCopy: (text: string, label: string) => void;
@@ -199,10 +201,19 @@ export function RecordInspector(props: RecordInspectorProps) {
           <CopyIcon />
           Copy as JSON
         </button>
-        <button className="btn" onClick={() => props.onCopy(rowToInsert(props.tableName ?? "table_name", columns, row, props.dialect), "INSERT statement")} title={props.tableName ? undefined : "Replace table_name with your table"} type="button">
-          <CopyIcon />
-          Copy as INSERT
-        </button>
+        {props.dialect === "kafka" ? (
+          props.onSendAgain ? (
+            <button className="btn" onClick={() => props.onSendAgain?.(row)} title="Open the Send form with this message's key, value and headers" type="button">
+              <PlayIcon size={11} />
+              Send again…
+            </button>
+          ) : null
+        ) : (
+          <button className="btn" onClick={() => props.onCopy(rowToInsert(props.tableName ?? "table_name", columns, row, props.dialect === "clickhouse" ? "clickhouse" : "postgres"), "INSERT statement")} title={props.tableName ? undefined : "Replace table_name with your table"} type="button">
+            <CopyIcon />
+            Copy as INSERT
+          </button>
+        )}
       </div>
     </div>
   );

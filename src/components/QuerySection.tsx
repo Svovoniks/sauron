@@ -21,9 +21,11 @@ interface QuerySectionProps {
   onAbortQuery: () => void;
   onRun: (kind: RunKind) => void;
   onOpenSettings: (section: "editor") => void;
+  /** A tab on a Kafka connection: this form takes the place of the editor (which stays mounted, hidden). */
+  kafka: { form: ReactNode; runLabel: string; canRun: boolean } | null;
 }
 
-export function QuerySection({ editorContainerRef, tabs, isLoading, isCommandQuery, commandUnsupported, prodBanner, execScope, executeShortcut, onSaveQuery, onOpenFile, onAbortQuery, onRun, onOpenSettings }: QuerySectionProps) {
+export function QuerySection({ editorContainerRef, tabs, isLoading, isCommandQuery, commandUnsupported, prodBanner, execScope, executeShortcut, onSaveQuery, onOpenFile, onAbortQuery, onRun, onOpenSettings, kafka }: QuerySectionProps) {
   const menuButton = useRef<HTMLButtonElement | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
@@ -40,7 +42,7 @@ export function QuerySection({ editorContainerRef, tabs, isLoading, isCommandQue
       <div className="query-input-container">
         <div className="query-header">
           {tabs}
-          <div className="query-header-tools">
+          <div className="query-header-tools" hidden={kafka !== null}>
             <button className="query-file-button" disabled={isLoading} onClick={onOpenFile} title="Load a .sql file into the editor" type="button">
               Open SQL file…
             </button>
@@ -56,10 +58,11 @@ export function QuerySection({ editorContainerRef, tabs, isLoading, isCommandQue
             <span>
               {prodBanner.name} · {prodBanner.host}
             </span>
-            <span className="muted">· {prodBanner.readOnly ? "read-only · " : ""}writes need confirmation</span>
+            <span className="muted">· {prodBanner.readOnly ? "read-only · " : ""}{kafka ? "sending needs confirmation" : "writes need confirmation"}</span>
           </div>
         ) : null}
-        <div className="query-editor" ref={editorContainerRef}></div>
+        {kafka?.form}
+        <div className="query-editor" hidden={kafka !== null} ref={editorContainerRef}></div>
       </div>
       <div className="query-actions">
         <button className="button save-button" onClick={onSaveQuery} type="button">
@@ -69,6 +72,11 @@ export function QuerySection({ editorContainerRef, tabs, isLoading, isCommandQue
           <button className="button cancel-button" onClick={onAbortQuery} title={`Abort (${comboText("Mod+.")})`} type="button">
             <StopIcon size={12} />
             Abort
+          </button>
+        ) : kafka ? (
+          <button className="button execute-button" disabled={!kafka.canRun} onClick={() => onRun("default")} title={`${kafka.runLabel} (${comboText("Mod+Enter")})`} type="button">
+            <PlayIcon size={12} />
+            {kafka.runLabel}
           </button>
         ) : (
           <div className="run-split">

@@ -88,7 +88,7 @@ export function useSchema() {
         }
 
         const queries = schemaQueries(connection.db_type);
-        const needed = connection.db_type === "postgres" ? 3 : 2;
+        const needed = connection.db_type === "postgres" ? 3 : connection.db_type === "kafka" ? 1 : 2;
 
         // 2. the table list: small and quick
         const tables = await executeScript(connection, queries.slice(0, 1), 300_000, true);
@@ -101,10 +101,10 @@ export function useSchema() {
         // Keep the columns we already know while they are refreshed, so the tree does not collapse.
         const known = new Map((statesRef.current[id]?.schema?.tables ?? []).map((t) => [`${t.schema}.${t.name}`, t.columns]));
         const merged: Schema = { ...withoutColumns, tables: withoutColumns.tables.map((t) => ({ ...t, columns: known.get(`${t.schema}.${t.name}`) ?? [] })) };
-        patch({ schema: merged, cached: false, columnsLoading: true });
+        patch({ schema: merged, cached: false, columnsLoading: queries.length > 1 });
 
-        // 3. columns, keys, functions
-        const details = await executeScript(connection, queries.slice(1), 300_000, true);
+        // 3. columns, keys, functions (Kafka topics have none)
+        const details = queries.length > 1 ? await executeScript(connection, queries.slice(1), 300_000, true) : [];
         const all: StatementOutcome[] = [tables[0], ...details];
         const error = schemaLoadError(all, needed);
         if (error) {

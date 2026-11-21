@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { parseConnectionUrl, splitHosts } from "../lib/connUrl";
 import { testConnection } from "../lib/db/query";
-import { defaultPort, ENV_LABEL, type Connection, type ConnectionDraft, type DbType, type Env, type SslMode, type TargetSessionAttrs, type TestReport } from "../types/app";
+import { DB_TYPE_LABEL, defaultPort, ENV_LABEL, SASL_MECHANISMS, type Connection, type ConnectionDraft, type DbType, type Env, type SaslMechanism, type SslMode, type TargetSessionAttrs, type TestReport } from "../types/app";
 import { expandPastedHosts, fromHostRows, toHostRows, type HostRow } from "../lib/hostList";
 import { CheckIcon, CloseIcon, EyeIcon, EyeOffIcon, FileIcon, LinkIcon, PlusIcon, WarningIcon } from "./icons";
 import { Modal } from "./Modal";
@@ -38,7 +38,10 @@ const SSL_OPTIONS: Record<DbType, { value: SslMode; label: string }[]> = {
     { value: "require", label: "https (certificate not checked)" },
     { value: "verify", label: "https (certificate checked)" },
   ],
+  kafka: [{ value: "disable", label: "Off (plaintext)" }],
 };
+
+const DB_TYPES: DbType[] = ["postgres", "clickhouse", "kafka"];
 
 const SSL_HINT: Record<SslMode, string> = {
   disable: "No encryption. Only for local databases.",
@@ -68,15 +71,15 @@ const timeoutLabel = (secs: number) => (secs === 0 ? "none" : secs >= 60 && secs
 
 const validPort = (text: string) => /^\d+$/.test(text) && Number(text) >= 1 && Number(text) <= 65535;
 
-/** Postgres takes libpq's lists: several hosts, and one port for all of them or one port per host. */
+/** Postgres takes libpq's lists: several hosts, and one port for all of them or one port per host. Kafka brokers are listed the same way. */
 function validateAddress(draft: ConnectionDraft): string | null {
-  if (draft.db_type !== "postgres") {
+  if (draft.db_type === "clickhouse") {
     if (!draft.host.trim()) return "Host is required.";
     if (draft.host.includes(",")) return "Several hosts are only supported for Postgres.";
     return validPort(draft.port.trim()) ? null : "Port must be a number from 1 to 65535.";
   }
   const hosts = splitHosts(draft.host);
-  if (hosts.length === 0) return "Host is required.";
+  if (hosts.length === 0) return draft.db_type === "kafka" ? "At least one broker is required." : "Host is required.";
   const ports = draft.port.split(",").map((p) => p.trim());
   if (ports.length === 1) return validPort(ports[0]) ? null : "Port must be a number from 1 to 65535.";
   if (!ports.every(validPort)) return "Each port must be a number from 1 to 65535.";
@@ -170,7 +173,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
     patch({
       db_type: dbType,
       ...fromHostRows(next),
-      ssl_mode: SSL_OPTIONS[dbType].some((option) => option.value === draft.ssl_mode) ? draft.ssl_mode : "require",
+      ssl_mode: SSL_OPTIONS[dbType].some((option) => option.value === draft.ssl_mode) ? draft.ssl_mode : dbType === "kafka" ? "disable" : "require",
     });
   };
 
@@ -186,6 +189,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
   };
 
   const error = validate(draft, defaultCerts);
+  const isKafka = draft.db_type === "kafka";
 
   const browse = async (field: CertField) => {
     const selected = await open({ multiple: false });
@@ -214,6 +218,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
       ssl_key: draft.ssl_key.trim(),
       use_default_certs: draft.use_default_certs,
       target_session_attrs: draft.target_session_attrs,
+      sasl_mechanism: draft.sasl_mechanism,
     };
     try {
       const report = await testConnection(connection, draft.password);
@@ -238,14 +243,13 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
         }}
       >
         <div className="form-group">
-          <label id="db-type-label">Database Type</label>
-          <div aria-labelledby="db-type-label" className={`db-type-switch ${draft.db_type === "clickhouse" ? "clickhouse" : ""}`} role="group">
-            <button aria-pressed={draft.db_type === "postgres"} className={draft.db_type === "postgres" ? "active" : ""} onClick={() => changeDbType("postgres")} type="button">
-              Postgres
-            </button>
-            <button aria-pressed={draft.db_type === "clickhouse"} className={draft.db_type === "clickhouse" ? "active" : ""} onClick={() => changeDbType("clickhouse")} type="button">
-              ClickHouse
-            </button>
+          <label id="db-type-label">Type</label>
+          <div aria-labelledby="db-type-label" className={`db-type-switch ${draft.db_type}`} role="group">
+            {DB_TYPES.map((type) => (
+              <button aria-pressed={draft.db_type === type} className={draft.db_type === type ? "active" : ""} key={type} onClick={() => changeDbType(type)} type="button">
+                {DB_TYPE_LABEL[type]}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -294,7 +298,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
         </div>
         <div className={`form-group host-list ${rows.length > 1 ? "multi" : ""}`}>
           <div className="host-row host-row-head">
-            <label htmlFor="host">{rows.length > 1 ? "Hosts" : "Host"}</label>
+            <label htmlFor="host">{isKafka ? (rows.length > 1 ? "Brokers" : "Broker") : rows.length > 1 ? "Hosts" : "Host"}</label>
             <label htmlFor="port">Port</label>
           </div>
           {rows.map((row, index) => (
@@ -304,7 +308,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
                 autoCorrect="off"
                 id={index === 0 ? "host" : undefined}
                 onChange={(event) => changeHost(index, event.target.value)}
-                placeholder={index === 0 ? "db.example.internal" : "another node of the cluster"}
+                placeholder={index === 0 ? (isKafka ? "kafka01.example.internal" : "db.example.internal") : isKafka ? "another broker" : "another node of the cluster"}
                 ref={(element) => {
                   if (element) hostRefs.current.set(row.key, element);
                   else hostRefs.current.delete(row.key);
@@ -336,6 +340,13 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
               {rows.length > 1 ? "Add host" : "Add host (replica or another cluster node)"}
             </button>
           ) : null}
+          {isKafka ? (
+            <button className="host-add" onClick={addRow} type="button">
+              <PlusIcon size={13} />
+              Add broker
+            </button>
+          ) : null}
+          {isKafka ? <p className="field-hint">One broker is enough: the rest of the cluster is found through it. More are tried when the first does not answer.</p> : null}
           {draft.db_type === "postgres" && rows.length > 1 ? <p className="field-hint">Tried from top to bottom. Target session decides which one is kept.</p> : null}
         </div>
         {draft.db_type === "postgres" ? (
@@ -351,17 +362,34 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
             <p className="field-hint">{TARGET_OPTIONS.find((option) => option.value === draft.target_session_attrs)?.hint}</p>
           </div>
         ) : null}
-        <div className="host-port-group">
-          <div className="form-group">
+        <div className={isKafka ? "" : "host-port-group"}>
+          <div className="form-group" hidden={isKafka}>
             <label htmlFor="database">Database</label>
             <input autoCorrect="off" id="database" onChange={(event) => patch({ database: event.target.value })} placeholder={draft.db_type === "postgres" ? "postgres" : "default"} type="text" value={draft.database} />
           </div>
           <div className="form-group">
-            <label htmlFor="username">User</label>
-            <input autoCorrect="off" id="username" onChange={(event) => patch({ username: event.target.value })} placeholder="readonly" type="text" value={draft.username} />
+            <label htmlFor="username">
+              User{isKafka ? <span className="optional"> (optional)</span> : null}
+            </label>
+            <input autoCorrect="off" id="username" onChange={(event) => patch({ username: event.target.value })} placeholder={isKafka ? "empty: no login" : "readonly"} type="text" value={draft.username} />
           </div>
         </div>
-        <div className="form-group">
+        {isKafka && draft.username.trim() ? (
+          <div className="form-group">
+            <label htmlFor="sasl-mechanism">Login method</label>
+            <select id="sasl-mechanism" onChange={(event) => patch({ sasl_mechanism: event.target.value as SaslMechanism })} value={draft.sasl_mechanism}>
+              {SASL_MECHANISMS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className={`field-hint ${draft.sasl_mechanism === "plain" ? "warn" : ""}`}>
+              {draft.sasl_mechanism === "plain" ? "PLAIN sends the password as it is, and this connection has no TLS: anyone on the network path can read it." : "SCRAM never sends the password itself."}
+            </p>
+          </div>
+        ) : null}
+        <div className="form-group" hidden={isKafka && !draft.username.trim()}>
           <label htmlFor="password">Password</label>
           <div className="password-input-container">
             <input
@@ -402,7 +430,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
             {passwordError}
           </p>
         ) : null}
-        <div className="form-group">
+        <div className="form-group" hidden={isKafka}>
           <label htmlFor="ssl-mode">Encryption (TLS)</label>
           <select id="ssl-mode" onChange={(event) => patch({ ssl_mode: event.target.value as SslMode })} value={draft.ssl_mode}>
             {SSL_OPTIONS[draft.db_type].map((option) => (
@@ -461,13 +489,13 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
             <span aria-hidden="true" className="toggle-track" />
             <span>
               <b>Read-only</b>
-              <small>The database itself rejects writes. Recommended.</small>
+              <small>{isKafka ? "Sending messages is refused. Reading never affects consumers either way." : "The database itself rejects writes. Recommended."}</small>
             </span>
           </label>
           <div className="safe-card">
             <span>
-              <b>Query timeout</b>
-              <small>Stops runaway queries on the server.</small>
+              <b>{isKafka ? "Read timeout" : "Query timeout"}</b>
+              <small>{isKafka ? "A long scan stops here and shows what it found." : "Stops runaway queries on the server."}</small>
             </span>
             <select aria-label="Query timeout" onChange={(event) => patch({ timeout_secs: Number(event.target.value) })} value={draft.timeout_secs}>
               {(TIMEOUTS.includes(draft.timeout_secs) ? TIMEOUTS : [draft.timeout_secs, ...TIMEOUTS]).map((secs) => (
@@ -480,7 +508,7 @@ export function ConnectionModal({ initial, isEditing, hasSavedPassword, focusUrl
         </div>
         {!draft.read_only ? (
           <p className="field-hint warn">
-            <WarningIcon className="inline-icon" /> Writes are allowed on this connection{draft.env === "prod" ? ", and you will be asked to confirm each one." : "."}
+            <WarningIcon className="inline-icon" /> {isKafka ? "Sending messages is allowed" : "Writes are allowed"} on this connection{draft.env === "prod" ? ", and you will be asked to confirm each one." : "."}
           </p>
         ) : null}
 

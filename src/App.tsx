@@ -14,6 +14,7 @@ import { DataView } from "./components/DataView";
 import { ExportModal } from "./components/ExportModal";
 import { AgentPanel } from "./components/AgentPanel";
 import { HistoryPanel, normalizeSql } from "./components/HistoryPanel";
+import { KafkaForm } from "./components/KafkaForm";
 import { Notices } from "./components/Notices";
 import { ProdGuardModal } from "./components/ProdGuardModal";
 import { QuerySection } from "./components/QuerySection";
@@ -38,6 +39,18 @@ import { useUpdater } from "./hooks/useUpdater";
 import { useSqlEditor, type RunKind } from "./hooks/useSqlEditor";
 import { useWorkspace, type RunRequest, type RunSummary } from "./hooks/useWorkspace";
 import { itemsOf } from "./lib/appDataOps";
+import {
+  displayText,
+  isKafkaText,
+  jsonPaths,
+  kafkaFormOf,
+  kafkaFormProblem,
+  kafkaSummary,
+  runnableKafkaText,
+  serializeKafkaForm,
+  emptyKafkaForm,
+  type KafkaForm as KafkaFormValue,
+} from "./lib/kafka";
 import { formatConnectionUrl } from "./lib/connUrl";
 import { isMetaCommand, MAX_ROW_LIMIT, testConnection } from "./lib/db/query";
 import { findIdentifier, tokenLengthAt } from "./lib/errors";
@@ -51,6 +64,7 @@ import { accentOverride, comboText, DENSITY_ROW_HEIGHT, isMac, matchesCombo, mat
 import { isRiskyMetaCommand, isWriteStatement } from "./lib/sql/analyze";
 import { splitSqlRanges, splitSqlStatements } from "./lib/sql/splitStatements";
 import {
+  DB_TYPE_LABEL,
   emptyDraft,
   GLOBAL_SCOPE,
   type Connection,
@@ -141,7 +155,7 @@ export default function App() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [settingsModal, setSettingsModal] = useState<{ section?: SettingsSection; focusRow?: string } | null>(null);
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
-  const [pendingGuard, setPendingGuard] = useState<{ request: RunRequest; writes: string[] } | null>(null);
+  const [pendingGuard, setPendingGuard] = useState<{ request: RunRequest; writes: string[]; kafka?: boolean } | null>(null);
   const [pendingRisky, setPendingRisky] = useState<RunRequest | null>(null);
   const [pendingClearHistory, setPendingClearHistory] = useState(false);
   const [pendingClearAgentLog, setPendingClearAgentLog] = useState(false);
@@ -203,6 +217,11 @@ export default function App() {
     [data.connections, activeTab?.connectionId],
   );
   const dbType = activeConnection?.db_type ?? "postgres";
+  const isKafka = dbType === "kafka";
+  /** The text a tab runs and saves: its SQL, or its Kafka form on a Kafka connection. */
+  const tabText = (tab: QueryTab) => (data.connections.find((c) => c.id === tab.connectionId)?.db_type === "kafka" ? tab.kafka || serializeKafkaForm(emptyKafkaForm()) : tab.sql);
+  const kafkaForm = useMemo(() => kafkaFormOf(activeTab?.kafka), [activeTab?.kafka]);
+  const setKafkaForm = (form: KafkaFormValue) => activeTab && ws.patchTab(activeTab.id, { kafka: serializeKafkaForm(form) });
   const schemaState = schemas.get(activeConnection?.id ?? null);
   const defaultSchema = useMemo(() => {
     const schema = schemaState.schema;
@@ -324,6 +343,14 @@ export default function App() {
         if (settings.warnBackslash && isRiskyMetaCommand(request.text)) return setPendingRisky(request);
         return startRequest(request);
       }
+      if (connection.db_type === "kafka") {
+        const form = kafkaFormOf(request.text);
+        if (form.mode === "send" && connection.env === "prod" && settings.confirmProdWrites) {
+          const value = form.send.value.length > 600 ? `${form.send.value.slice(0, 600)}…` : form.send.value;
+          return setPendingGuard({ request, writes: [`${kafkaSummary(request.text).split(" · ").slice(0, -1).join(" · ")}\n\n${value}`], kafka: true });
+        }
+        return startRequest(request);
+      }
       // Read-only is the database's own mode and a script can switch it off again, so the guard does not trust it.
       if (connection.env === "prod" && settings.confirmProdWrites) {
         const writes = splitSqlStatements(request.text, connection.db_type).filter((statement) => isWriteStatement(statement, connection.db_type));
@@ -342,6 +369,19 @@ export default function App() {
     if (!activeConnection) {
       ws.reportError(activeTab.id, "No active connection selected.");
       return;
+    }
+    if (activeConnection.db_type === "kafka") {
+      const form = kafkaFormOf(activeTab.kafka);
+      const problem = kafkaFormProblem(form, activeConnection.read_only);
+      if (problem) return ws.reportError(activeTab.id, problem);
+      return requestRun({
+        tabId: activeTab.id,
+        connection: activeConnection,
+        text: runnableKafkaText(form),
+        offset: 0,
+        rowLimit: form.mode === "read" ? form.read.limit : 1,
+        psql: {},
+      });
     }
     const target = editor.getRunTarget(kind === "explain" ? "statement" : kind, settings.execScope);
     let text = target.text;
@@ -375,6 +415,20 @@ export default function App() {
       rowLimit: settings.rowLimit,
       psql: { path: settings.psqlPath, useFallback: settings.psqlFallback },
     });
+  };
+
+  /** A Kafka form in a fresh tab, run at once (schema panel); run is what runs when it is not the form itself. */
+  const openKafka = (form: KafkaFormValue, name: string, run: KafkaFormValue = form) => {
+    const tab = ws.addTab({ name, kafka: serializeKafkaForm(form), connectionId: activeConnection?.id ?? null });
+    setSelectedIndex(null);
+    if (!activeConnection) return;
+    requestRun({ tabId: tab.id, connection: activeConnection, text: runnableKafkaText(run), offset: 0, rowLimit: run.mode === "read" ? run.read.limit : 1, psql: {} });
+  };
+
+  /** "Partitions" in the form: describes the topic in this tab without changing the form. */
+  const describeKafkaTopic = () => {
+    if (!activeTab || !activeConnection || ws.runningTabIds.has(activeTab.id) || !kafkaForm.topic.trim()) return;
+    requestRun({ tabId: activeTab.id, connection: activeConnection, text: runnableKafkaText({ ...kafkaForm, mode: "describe" }), offset: 0, rowLimit: 10_000, psql: {} });
   };
 
   const activeTabRunning = activeTab !== null && ws.runningTabIds.has(activeTab.id);
@@ -471,7 +525,7 @@ export default function App() {
     return [
       { label: tab.pinned ? "Unpin" : "Pin tab", onSelect: () => ws.togglePin(id) },
       { label: "Duplicate", onSelect: () => ws.duplicateTab(id) },
-      { label: "Save as query…", onSelect: () => setSavePrompt({ sql: tab.sql, initialName: tab.name.startsWith("untitled") ? "" : tab.name, linkTab: id === ws.activeTabId }) },
+      { label: "Save as query…", onSelect: () => setSavePrompt({ sql: tabText(tab), initialName: tab.name.startsWith("untitled") ? "" : tab.name, linkTab: id === ws.activeTabId }) },
       { type: "separator" },
       { label: "Close", onSelect: () => closeTabsNow([id]) },
       { label: "Close others", disabled: others.length === 0, onSelect: () => closeTabsNow(others) },
@@ -605,15 +659,23 @@ export default function App() {
   };
 
   // --- saved queries & results ----------------------------------------------------------------
-  /** Save the active tab: overwrite its saved query, or ask for a name. */
+  /**
+   * Save the active tab: overwrite its saved query, or ask for a name. Only a query of the tab's own connection
+   * (or a global one) holding the same kind of text is overwritten. A tab opened from a saved query and then moved
+   * to another connection, or switched between SQL and a Kafka form, saves a new query in the list it now shows
+   * instead of silently replacing the original somewhere out of sight.
+   */
   const saveActiveQuery = () => {
     if (!activeTab) return;
-    if (activeTab.savedQueryId && activeTab.savedScope && savedTextRef.current(activeTab) !== null) {
-      appData.overwriteQuery(activeTab.savedScope, activeTab.savedQueryId, activeTab.sql);
+    const text = tabText(activeTab);
+    const savedText = savedTextRef.current(activeTab);
+    const ownScope = activeTab.savedScope === GLOBAL_SCOPE || activeTab.savedScope === activeTab.connectionId;
+    if (activeTab.savedQueryId && activeTab.savedScope && ownScope && savedText !== null && isKafkaText(savedText) === isKafkaText(text)) {
+      appData.overwriteQuery(activeTab.savedScope, activeTab.savedQueryId, text);
       notify("info", `Saved “${activeTab.name}”.`);
       return;
     }
-    setSavePrompt({ sql: activeTab.sql, initialName: activeTab.name.startsWith("untitled") ? "" : activeTab.name, linkTab: true });
+    setSavePrompt({ sql: text, initialName: activeTab.name.startsWith("untitled") ? "" : activeTab.name, linkTab: true });
   };
 
   const saveQueryConfirmed = (name: string) => {
@@ -648,7 +710,7 @@ export default function App() {
   };
 
   const overwriteQuery = (query: SavedQuery) => {
-    if (sidebarScope && activeTab) appData.overwriteQuery(sidebarScope, query.id, activeTab.sql);
+    if (sidebarScope && activeTab) appData.overwriteQuery(sidebarScope, query.id, tabText(activeTab));
   };
 
   const overwriteResult = (saved: SavedResult) => {
@@ -674,6 +736,15 @@ export default function App() {
       (tab) => tab.savedQueryId === query.id && tab.savedScope === scope && tab.connectionId === (activeConnection?.id ?? null),
     );
     if (linked) return selectTab(linked.id);
+    if (isKafkaText(query.query)) {
+      // A Kafka form: into this tab when it is on Kafka and its form is still empty, otherwise a new tab.
+      if (activeTab && isKafka && !activeTab.savedQueryId && !kafkaFormOf(activeTab.kafka).topic.trim()) {
+        ws.patchTab(activeTab.id, { savedQueryId: query.id, savedScope: scope, name: query.name, kafka: query.query });
+      } else {
+        newTab({ name: query.name, kafka: query.query, savedQueryId: query.id, savedScope: scope });
+      }
+      return;
+    }
     if (activeTab && !activeTab.sql.trim() && !activeTab.savedQueryId) {
       ws.patchTab(activeTab.id, { savedQueryId: query.id, savedScope: scope, name: query.name });
       editor.replaceText(query.query);
@@ -690,7 +761,8 @@ export default function App() {
     const name = data.connections.find((c) => c.id === scopeConnection)?.name ?? "";
     ws.showSavedResult(activeTab.id, { columns: saved.columns, rows: saved.rows, truncated: saved.truncated, message: null }, `saved result “${saved.name}”`, scopeConnection, name, saved.query);
     if (activeTab.savedQueryId) ws.patchTab(activeTab.id, { savedQueryId: null, savedScope: null });
-    editor.replaceText(saved.query);
+    if (isKafkaText(saved.query)) ws.patchTab(activeTab.id, { kafka: saved.query });
+    else editor.replaceText(saved.query);
   };
 
   const deleteModalText = (() => {
@@ -711,7 +783,8 @@ export default function App() {
   /** An agent call opens in a new tab, so the user's own editor text and results stay as they are. */
   const openAgentTab = (entry: AgentEntry) => {
     const connection = data.connections.find((c) => c.id === entry.connection_id);
-    return ws.addTab({ name: `Agent ${timeLabel(entry.at)}`, connectionId: connection?.id ?? activeTab?.connectionId ?? null, sql: entry.sql });
+    const kafka = isKafkaText(entry.sql);
+    return ws.addTab({ name: `Agent ${timeLabel(entry.at)}`, connectionId: connection?.id ?? activeTab?.connectionId ?? null, ...(kafka ? { kafka: entry.sql } : { sql: entry.sql }) });
   };
 
   const openAgentResult = async (entry: AgentEntry) => {
@@ -728,7 +801,15 @@ export default function App() {
     if (!activeTab) return null;
     if (connection && connection.id !== activeTab.connectionId) selectConnectionTab(connection);
     if (activeTab.savedQueryId) ws.patchTab(activeTab.id, { savedQueryId: null, savedScope: null }); // different text now: do not overwrite that saved query with it
-    editor.replaceText(entry.sql);
+    if (isKafkaText(entry.sql)) {
+      // Only the part that ran is in history: keep the rest of the tab's form.
+      const ran = kafkaFormOf(entry.sql);
+      const current = kafkaFormOf(activeTab.kafka);
+      const restored = ran.mode === "describe" ? { ...current, topic: ran.topic } : ran.mode === "send" ? { ...current, mode: ran.mode, topic: ran.topic, send: ran.send } : { ...current, mode: ran.mode, topic: ran.topic, read: ran.read };
+      ws.patchTab(activeTab.id, { kafka: serializeKafkaForm(restored) });
+    } else {
+      editor.replaceText(entry.sql);
+    }
     setActiveHistoryId(entry.id);
     if (!silent) {
       const name = connection?.name ?? entry.connectionName;
@@ -747,7 +828,7 @@ export default function App() {
       connection,
       text: entry.sql,
       offset: 0,
-      rowLimit: settings.rowLimit,
+      rowLimit: isKafkaText(entry.sql) ? kafkaFormOf(entry.sql).read.limit : settings.rowLimit,
       psql: { path: settings.psqlPath, useFallback: settings.psqlFallback },
     });
   };
@@ -765,9 +846,10 @@ export default function App() {
 
   // --- schema panel ------------------------------------------------------------------------------
   const schemaName = (table: SchemaTable) => qualifiedName(table, schemaState.schema?.dbType ?? dbType, defaultSchema);
-  const selectAllFrom = (table: SchemaTable) => openAndRun(`select *\nfrom ${schemaName(table)}\nlimit 100;`, table.name);
+  const selectAllFrom = (table: SchemaTable) =>
+    table.kind === "topic" ? openKafka(emptyKafkaForm(table.name), table.name) : openAndRun(`select *\nfrom ${schemaName(table)}\nlimit 100;`, table.name);
   const describeTable = (table: SchemaTable) =>
-    openAndRun(dbType === "postgres" ? `\\d ${schemaName(table)}` : `DESCRIBE TABLE ${schemaName(table)}`, `\\d ${table.name}`);
+    table.kind === "topic" ? openKafka(emptyKafkaForm(table.name), table.name, { ...emptyKafkaForm(table.name), mode: "describe" }) : openAndRun(dbType === "postgres" ? `\\d ${schemaName(table)}` : `DESCRIBE TABLE ${schemaName(table)}`, `\\d ${table.name}`);
 
   // --- SQL files ------------------------------------------------------------------------------
   const openSqlFile = async () => {
@@ -881,19 +963,19 @@ export default function App() {
         group: "Connections",
         icon: connection.read_only ? I.lock : I.db,
         label: connection.name || "Unnamed",
-        sub: `${connection.db_type === "postgres" ? "Postgres" : "ClickHouse"} · ${connection.host}`,
+        sub: `${DB_TYPE_LABEL[connection.db_type]} · ${connection.host}`,
         kbd: index < 9 ? comboText(`Mod+${index + 1}`) : undefined,
         run: () => selectConnectionTab(connection),
       }),
     );
     ws.tabs.forEach((tab) =>
-      items.push({ id: `t-${tab.id}`, group: "Tabs", icon: I.file, label: tab.name, sub: tab.sql.replace(/\s+/g, " ").slice(0, 80), mono: true, run: () => selectTab(tab.id) }),
+      items.push({ id: `t-${tab.id}`, group: "Tabs", icon: I.file, label: tab.name, sub: displayText(tabText(tab)).replace(/\s+/g, " ").slice(0, 80), mono: true, run: () => selectTab(tab.id) }),
     );
     [
       ...savedQueries.map((query) => ({ query, scope: sidebarScope })),
       ...(activeSaveScope === "local" && activeConnection ? itemsOf(data, "queries", GLOBAL_SCOPE).map((query) => ({ query, scope: GLOBAL_SCOPE })) : []),
     ].forEach(({ query, scope }) =>
-      items.push({ id: `q-${query.id}`, group: "Saved queries", icon: I.file, label: query.name, sub: query.query.replace(/\s+/g, " ").slice(0, 90), mono: true, run: () => selectQuery(query, scope) }),
+      items.push({ id: `q-${query.id}`, group: "Saved queries", icon: I.file, label: query.name, sub: displayText(query.query).replace(/\s+/g, " ").slice(0, 90), mono: true, run: () => selectQuery(query, scope) }),
     );
     (schemaState.schema?.tables ?? []).slice(0, 2_000).forEach((table) =>
       items.push({
@@ -901,7 +983,7 @@ export default function App() {
         group: "Tables",
         icon: I.table,
         label: table.schema === defaultSchema ? table.name : `${table.schema}.${table.name}`,
-        sub: `${table.kind} · select * … limit 100`,
+        sub: table.kind === "topic" ? "topic · newest messages" : `${table.kind} · select * … limit 100`,
         run: () => selectAllFrom(table),
       }),
     );
@@ -1100,8 +1182,34 @@ export default function App() {
       rerunLast({ text: activeRun ? textFrom(failed, activeRun.runSql, activeRun.runOffset) : undefined, offset: failed?.offset, timeoutSecs: secs });
     },
     onRetry: () => rerunLast(),
+    onSendAgain: (columns: { name: string }[], row: (string | null)[]) => {
+      if (!activeTab) return;
+      const cell = (name: string) => row[columns.findIndex((c) => c.name === name)] ?? null;
+      const topic = kafkaFormOf(activeRun?.runSql).topic || kafkaForm.topic;
+      const headers: { name: string; value: string }[] = [];
+      try {
+        const parsed: unknown = JSON.parse(cell("headers") ?? "null");
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) for (const [name, value] of Object.entries(parsed)) headers.push({ name, value: typeof value === "string" ? value : JSON.stringify(value) });
+      } catch {
+        /* no headers */
+      }
+      setKafkaForm({ ...kafkaForm, mode: "send", topic, send: { ...kafkaForm.send, key: cell("key") ?? "", value: cell("value") ?? "", headers } });
+      setSelectedIndex(null);
+      notify("info", activeConnection?.read_only ? "The message is in the Send form. This connection is read-only: turn off read-only to send it." : "The message is in the Send form: check it, then press Send.");
+    },
     onOpenSettings: (section: "connections" | "results" | "editor" | "psql") => openSettings(section),
   };
+
+  const kafkaTopics = useMemo(
+    () => (isKafka ? (schemaState.schema?.tables ?? []).filter((t) => t.kind === "topic" && !t.name.startsWith("__")).map((t) => ({ name: t.name, partitions: t.rows })) : []),
+    [isKafka, schemaState.schema],
+  );
+  const kafkaJsonFields = useMemo(() => {
+    if (!isKafka || !activeResult) return [];
+    const index = activeResult.columns.findIndex((c) => c.name === "value");
+    return index < 0 ? [] : jsonPaths(activeResult.rows.map((r) => r[index]));
+  }, [isKafka, activeResult]);
+  const kafkaProblem = isKafka && activeConnection ? kafkaFormProblem(kafkaForm, activeConnection.read_only) : null;
 
   const canLoadMore = Boolean(activeResult?.truncated && activeRun && activeRun.runOffset >= 0 && !activeRun.resultSource && activeRun.rowLimit < MAX_ROW_LIMIT && activeConnection);
   const tableName = guessTable(activeSet?.sql);
@@ -1158,7 +1266,7 @@ export default function App() {
           connection={activeConnection}
           onCopy={(text) => copy(text, `“${text}”`)}
           onDescribe={describeTable}
-          onInsert={(text) => editor.insertText(text)}
+          onInsert={(text) => (isKafka ? setKafkaForm({ ...kafkaForm, topic: text }) : editor.insertText(text))}
           onLoad={(force) => activeConnection && void schemas.load(activeConnection, force)}
           onSelectAll={selectAllFrom}
           state={schemaState}
@@ -1278,6 +1386,26 @@ export default function App() {
             onRun={runNow}
             onSaveQuery={saveActiveQuery}
             prodBanner={prodBanner}
+            kafka={
+              isKafka && activeConnection
+                ? {
+                    form: (
+                      <KafkaForm
+                        form={kafkaForm}
+                        jsonFields={kafkaJsonFields}
+                        onChange={setKafkaForm}
+                        onDescribe={describeKafkaTopic}
+                        onRun={() => runNow("default")}
+                        problem={kafkaProblem}
+                        readOnly={activeConnection.read_only}
+                        topics={kafkaTopics}
+                      />
+                    ),
+                    runLabel: kafkaForm.mode === "send" ? "Send" : "Read",
+                    canRun: kafkaProblem === null,
+                  }
+                : null
+            }
             tabs={
               <QueryTabs
                 activeId={ws.activeTabId}
@@ -1383,6 +1511,7 @@ export default function App() {
 
       {pendingGuard && (
         <ProdGuardModal
+          kafka={pendingGuard.kafka}
           connectionName={pendingGuard.request.connection.name}
           host={pendingGuard.request.connection.host}
           onClose={() => setPendingGuard(null)}

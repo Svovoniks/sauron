@@ -7,6 +7,8 @@ export interface QueryTab {
   /** Connection the tab runs on; null until one is chosen. */
   connectionId: string | null;
   sql: string;
+  /** The Kafka form (JSON, see lib/kafka.ts) used while the tab is on a Kafka connection; "" until first used. Kept apart from sql so switching connections loses neither. */
+  kafka: string;
   /** Saved query this tab was loaded from / saved as (to show unsaved edits and overwrite it). */
   savedQueryId: string | null;
   savedScope: string | null;

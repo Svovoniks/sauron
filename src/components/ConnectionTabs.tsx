@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { ConnStatus } from "../hooks/useConnectionStatus";
 import { comboText, isMac } from "../lib/settings";
-import { ENV_LABEL, ENVS, type Connection, type Env } from "../types/app";
+import { DB_TYPE_LABEL, ENV_LABEL, ENVS, type Connection, type Env } from "../types/app";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { BoltIcon, ChevronDownIcon, CopyIcon, DatabaseIcon, DotsIcon, DownloadIcon, EditIcon, GearIcon, LinkIcon, LockIcon, PlusIcon, TrashIcon, UploadIcon } from "./icons";
 import { WindowControls } from "./WindowControls";
@@ -29,7 +29,9 @@ interface ConnectionTabsProps {
   onWindowDragStart: (event: MouseEvent<HTMLDivElement>) => void;
 }
 
-const isConnectionIncomplete = (c: Connection) => !c.name.trim() || !c.host.trim() || !c.port.trim() || !c.database.trim() || !c.username.trim();
+// Kafka has no database, and its user is optional (plaintext clusters need none).
+const isConnectionIncomplete = (c: Connection) =>
+  !c.name.trim() || !c.host.trim() || !c.port.trim() || (c.db_type !== "kafka" && (!c.database.trim() || !c.username.trim()));
 
 const STATUS_TEXT = { ok: "Connected", err: "Last attempt failed", checking: "Checking…", "": "Not connected yet" } as const;
 
@@ -55,7 +57,7 @@ export function ConnectionTabs(props: ConnectionTabsProps) {
   const connectionMenu = (connection: Connection, x: number, y: number): OpenMenu => {
     const status = statusOf(connection.id);
     const items: MenuItem[] = [
-      { type: "label", text: `${connection.name || "Unnamed"} · ${connection.db_type === "postgres" ? "Postgres" : "ClickHouse"}${status.version ? ` · ${status.version.replace(/^PostgreSQL |^ClickHouse /, "")}` : ""}` },
+      { type: "label", text: `${connection.name || "Unnamed"} · ${DB_TYPE_LABEL[connection.db_type]}${status.version ? ` · ${status.version.replace(/^PostgreSQL |^ClickHouse |^Kafka · /, "")}` : ""}` },
       { label: "Edit…", icon: <EditIcon />, onSelect: () => props.onEditConnection(connection) },
       { label: "Duplicate", icon: <CopyIcon />, onSelect: () => props.onDuplicateConnection(connection) },
       { label: "Test connection", icon: <BoltIcon />, onSelect: () => props.onTestConnection(connection) },
