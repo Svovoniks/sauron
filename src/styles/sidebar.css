@@ -66,7 +66,7 @@
 }
 
 .sidebar-toggle button.active {
-  background: var(--accent-fill);
+  background: var(--accent);
   color: var(--accent-ink);
   box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.3);
 }
@@ -343,8 +343,6 @@
 .h-group {
   padding: 10px 6px 4px;
   font-size: 10.5px;
-  letter-spacing: calc(0.08em * var(--track));
-  text-transform: var(--caps);
   color: var(--faint);
 }
 
@@ -572,8 +570,6 @@
   gap: 4px;
   padding: 8px 4px 4px;
   font-size: 10.5px;
-  letter-spacing: calc(0.08em * var(--track));
-  text-transform: var(--caps);
   color: var(--faint);
   cursor: pointer;
 }
@@ -752,8 +748,6 @@
 .agent-detail-label {
   margin-bottom: 4px;
   font-size: 10.5px;
-  letter-spacing: calc(0.08em * var(--track));
-  text-transform: var(--caps);
   color: var(--faint);
 }
 

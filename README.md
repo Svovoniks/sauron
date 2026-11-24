@@ -1,141 +1,107 @@
 <p align="center">
-  <img src="https://github.com/Svovoniks/sauron/blob/master/demo/eye.png?raw=true" width="100" />
+  <img src="demo/eye.png" width="100" />
 </p>
 
-## What is this app?
+# Sauron
 
-Sauron is an app for searching the database (Postgres and ClickHouse, plus Kafka topics) so mostly just running selects and showing results in a pretty format
+A desktop app (macOS, Windows, Linux) for looking into **Postgres**, **ClickHouse** and **Kafka**: run queries, read topics and see
+the results in a readable form. AI agents can use the same saved connections through its built-in MCP server.
 
-## Run on Mac
- - install the app (drag it to Applications)
- - the first time, macOS says it cannot verify the developer: open System Settings -> Privacy & Security, scroll down and press
-   "Open Anyway" (on older macOS: right-click the app -> Open)
- - releases are signed ad hoc, not with an Apple Developer ID (that costs $99/year), so this one-time step is expected.
-   If macOS says the app is "damaged" instead, run `xattr -cr /Applications/sauron.app` once
+![Writing a query with completion, the results, the record view, the schema and the command palette](demo/demo.gif)
 
-## Some cool features:
- - formatting json in results
- - saving queries and results of queries
- - you can click on a row and it will open a view with full values of all columns
- - you can go up and down the results table with j and k or with arrow keys
- - search in results with Ctrl/Cmd+F
- - "Open SQL file…" loads a `.sql` file into the editor (up to 5 MB); review it, then Execute runs every statement in it
- - backslash commands for Postgres (`\dt`, `\d table`, `\l`, `\i file`, ...): text starting with `\` is handed **unfiltered to the real
-   `psql`** and its output is shown as is. If `psql` is not installed, a built-in version of the read-only catalog commands
-   (`\dt`, `\d table`, `\l`, `\dn`, `\df`, `\du`, `\dx`, `\sf`, `\sv`, `\conninfo`, `\?`) is used instead.
- - connections are **read-only by default** and have a query timeout; Postgres connections can use TLS
- - results are capped (5,000 rows by default, "Load more" fetches more), so a big table does not freeze the app
+## Install
 
-## Everyday workflow
- - **Settings** (`Cmd/Ctrl+,` or the gear): accent colour, editor font / size / wrap / line numbers, what Execute runs, row limit, row
-   density, zebra stripes, row numbers, how NULL is shown, defaults for new connections, the production guard, the `psql` binary,
-   rebindable shortcuts, history retention. Changes apply immediately and are saved automatically
- - **Connection tabs** show a status dot, a lock for read-only, an environment tag (local / staging / prod) and a `...` menu: edit,
-   duplicate, test, copy the URL (never the password), set the environment, make read-only, delete. `Cmd/Ctrl+O` switches connection,
-   `Cmd/Ctrl+1..9` jumps to one. A **prod** connection gets a red marker and asks you to type its name before any write
- - **Command palette** (`Cmd/Ctrl+K`): actions, connections (`@`), tabs, saved queries, tables (`#`) and every setting (`>` for commands only)
- - **Query tabs** (`Cmd/Ctrl+T` new, `Cmd/Ctrl+Shift+W` close; `Cmd+W` is left to macOS, it closes the window). Each tab keeps its own SQL,
-   undo history, connection and results. Tabs are restored on the next start (Settings -> General)
- - **Scripts**: every statement gets its own result tab plus a Messages log; a script stops at the first error. Execute runs the whole
-   script (or the statement at the cursor, see Settings -> Editor); `Cmd/Ctrl+Shift+Enter` always runs everything, `Cmd/Ctrl+Alt+Enter` explains
-   the statement at the cursor, a selection is always run on its own
- - **History** (sidebar tab): every run with its connection, time, duration and rows; filter, search, put back in the editor, run again,
-   save as a query. `Alt+Cmd/Ctrl+Left/Right` steps through earlier runs. Only SQL text is stored, never results
- - **Schema** (sidebar tab): tables, views and functions with row estimates, columns with types and keys; click a column to insert it, double-click a
-   table to read it. The editor completes table and column names (it understands aliases: `o.` after `join orders o`)
- - **Record view**: JSON as a collapsible tree, arrays as tags, timestamps with "3 weeks ago", filter fields, hide nulls, copy as JSON or INSERT
- - **Errors point at the problem**: the failing statement is underlined in the editor, with the SQLSTATE, a caret snippet, "did you mean ...?" for
-   a mistyped table or column, and timeout / disconnect / read-only explanations with the next step. `Cmd/Ctrl+.` cancels a running query
+Download the build for your platform from [Releases](https://github.com/Svovoniks/sauron/releases). The app checks for updates at launch
+and asks before installing one.
+
+- **macOS:** drag the app to Applications. Releases are not notarized, so the first start needs System Settings → Privacy & Security →
+  **Open Anyway**. If macOS says the app is "damaged", run `xattr -cr /Applications/sauron.app` once
+- **Windows** may show a SmartScreen warning for the same reason
+
+## Features
+
+- **Editor:** completion for tables and columns (aliases too), query tabs that run at the same time, scripts with a result tab per
+  statement, `.sql` files, history and saved queries
+- **Results:** formatted JSON, a record view with a collapsible JSON tree, search, and a row cap (5,000 by default, "Load more" fetches the rest)
+- **Errors** underline the failing statement and suggest fixes, such as "did you mean ...?" for a mistyped column
+- **Schema** sidebar with tables, views, functions, columns and keys
+- **psql commands:** text starting with `\` goes to your `psql`; without it, the read-only catalog commands (`\dt`, `\d table`, ...) still work
+- **Postgres clusters:** several hosts per connection with a primary / replica choice, TLS and client certificate login
+- **Safe by default:** connections are read-only with a query timeout until you change that, and a connection tagged prod asks you to
+  type its name before any write
+- **Themes:** eight colour themes, each with a dark and a light variant
+
+![Switching between the Graphite, Paper and Forest themes in Settings](demo/themes.gif)
+
+### Shortcuts
+
+`Cmd` on macOS, `Ctrl` elsewhere. Every shortcut can be changed in Settings.
+
+| Action                                     | Keys                          |
+|--------------------------------------------|-------------------------------|
+| Run (statement at cursor or whole script)  | `Cmd+Enter`                   |
+| Run everything / explain                   | `Cmd+Shift+Enter` / `Cmd+Alt+Enter` |
+| Cancel the running query                   | `Cmd+.`                       |
+| Command palette                            | `Cmd+K`                       |
+| New tab / close tab                        | `Cmd+T` / `Cmd+Shift+W`       |
+| Switch connection                          | `Cmd+O`, `Cmd+1..9`           |
+| Search in results                          | `Cmd+F`                       |
+| Move through results                       | `j` / `k` or arrow keys       |
+| Settings                                   | `Cmd+,`                       |
 
 ## Kafka
- - **New connection → Kafka**: one or more brokers (one is enough, the rest of the cluster is found through it), and an optional user and
-   password (SASL SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN). There is no TLS yet. Test connection checks DNS, TCP, the login and lists the topics
- - a query tab on a Kafka connection shows a **form instead of the SQL editor**; the tab keeps its SQL, so switching connections loses neither
- - **Read**: newest, oldest, a time range (15m ... 7d or custom, newest first), **Timestamp** (every partition from the first message at or
-   after a time, oldest first, like Redpanda Console; the field also takes pasted epoch seconds or milliseconds) or one partition from an
-   offset; optionally only some partitions; filters on
-   `key`, `value`, a JSON field (`value.status`, `value.items.0.sku`) or a header (`header.trace-id`) with =, ≠, contains, exists, >, <.
-   Values are shown as JSON (a tree in the record view). Partition, offset and time decide where reading starts; filters are checked on every
-   message read, so a scan stops at the limit, the connection's timeout or 5,000,000 messages and says how far it got
- - reading **never joins a consumer group and never commits offsets**: partitions are fetched directly, so real consumers are not affected
- - **Send** (only when the connection is not read-only): key, value, headers, and the partition: by key with FNV-1a (the sarama default),
-   by key with murmur2 (the Java client and franz-go default), or a partition number. A message without a key goes to a random partition.
-   Prod connections ask you to type the name first. **Send again…** in the record view puts a message back into the Send form
- - the Schema tab lists the topics (internal `__` topics hidden): click one to use it in the form, double-click to read its newest messages,
-   the info button shows partitions with their first and last offsets
- - history and saved queries store the form, so a read or a send can be repeated
+
+![Reading a Kafka topic with a JSON field filter and opening a message](demo/kafka.gif)
+
+- connect with a broker address and an optional login (SASL SCRAM-SHA-512, SCRAM-SHA-256 or PLAIN); TLS is not supported yet
+- **Read** the newest or oldest messages, a time range, from a timestamp or from an offset, and filter on the key, the value, a JSON
+  field (`value.status`) or a header
+- reading never joins a consumer group or commits offsets, so real consumers are not affected
+- **Send** a message with headers, picking the partition by key (FNV-1a or murmur2) or by number
 
 ## AI agents (MCP)
- - Sauron is also an MCP server, so an agent (Claude Code, Cursor, Claude Desktop, ...) can use your saved connections. The agent starts the
-   app's own executable with `--mcp`: no window opens, it speaks MCP over stdin / stdout, and the app does not have to be running
- - Settings -> AI agents copies the setup. For Claude Code on a Mac that is
-   `claude mcp add sauron -- /Applications/sauron.app/Contents/MacOS/sauron --mcp`, for Codex the same with `codex mcp add`; other agents take an `mcpServers` entry with the same
-   command and `"args": ["--mcp"]`
- - tools: `list_connections`, `list_tables`, `describe_table` and `query` (one statement, 100 rows by default, at most 1,000). Connections are
-   picked by name, and the agent never sees a password
- - Kafka connections: `list_tables` lists the topics, `describe_table` shows a topic's partitions and newest messages, `read_messages` takes
-   the fields of the Read form and `send_message` sends one message (only with `--allow-writes`, never on read-only or prod connections)
- - **read-only by default**: only SELECT / WITH / SHOW / EXPLAIN / DESCRIBE / VALUES are accepted, the session is read-only on the server, and
-   on Postgres every statement runs inside `BEGIN READ ONLY ... ROLLBACK`. Add `--allow-writes` after `--mcp` to let the agent write;
-   connections that are read-only or tagged prod stay read-only. A connection without a timeout gets 60 seconds
- - **Agent** (sidebar tab): every call an agent made, live while the app is open: the SQL, connection, time, duration and which agent,
-   with errors and refused writes marked. Click a call to see the exact text it got back; a table result opens in a new query tab.
-   The log is `agent-log/` in the app data folder (last 500 calls, kept as long as query history; history "off" turns it off too)
 
-## Updates
- - Sauron checks GitHub releases once at launch (Settings -> General -> "Check for updates automatically") and asks before it downloads
-   anything: *Download & install*, *Later* or *Skip this version*, then *Restart now*. Settings -> About has a "Check for updates" button
- - updates are verified with a signing key: the public half is in `src-tauri/tauri.conf.json`, the private half must be set as the GitHub
-   Actions secret `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, empty if the key has no password), otherwise the
-   release workflow cannot sign the update bundles. Generate a new pair with `bunx tauri signer generate -w ~/.tauri/sauron-updater.key`
-   (and put the new public key in `tauri.conf.json`); never commit the private key
- - the updater reads `latest.json` from the *latest published* release, so it only sees a release once every platform has uploaded;
-   versions released before this feature existed have to be updated by hand once
+Agents such as Claude Code, Codex or Cursor start the app's executable with `--mcp`; the app does not have to be running.
+Settings → AI agents copies the setup command, for example:
 
-## macOS passwords
- - macOS does not use the Keychain: it asks for the login password again after every update, once per saved connection, because it ties
-   each item to the exact build that created it (only a paid Apple Developer ID avoids that). Passwords are kept in an AES-256-GCM encrypted
-   file, `passwords.bin` in the app data directory (owner-only permissions, key derived from the Mac's hardware UUID), so nothing is ever asked.
-   It stops the file being copied to another Mac or restored from a backup, not a process running as you on the same Mac
- - passwords saved by older versions are moved out of the Keychain the first time each connection is used (one last prompt per connection)
- - the release workflow still signs the macOS app with a fixed self-signed certificate (`Sauron Self-Signed`), so the app keeps one identity
- - the certificate lives in the GitHub Actions secrets `MACOS_CODESIGN_P12` (base64 of the .p12) and `MACOS_CODESIGN_P12_PASSWORD`; keep the
-   same certificate forever, a new one counts as a different app and brings the prompts back once. Local `bun tauri build` stays ad-hoc signed
+```sh
+claude mcp add sauron -- /Applications/sauron.app/Contents/MacOS/sauron --mcp
+```
 
-## Where is my data?
- - connections, saved queries and saved results are JSON files in the app data directory
-   (macOS: `~/Library/Application Support/com.svovoniks.sauron/`); settings, query history and your open tabs are `settings.json`,
-   `history.json` and `session.json` next to them. Settings -> Data & privacy shows the folder and clears the history
- - passwords are stored apart from those files (Windows Credential Manager, Secret Service on Linux, an encrypted file on macOS),
-   never in them. Export asks whether to include them: "Include passwords" writes them into the JSON in **plain text**
-   (import puts them back into the password store). In the connection form the eye icon shows the saved password
- - Import adds the items of an export file to what you already have (items with the same id are replaced)
+- tools: `list_connections`, `list_tables`, `describe_table`, `query`, and `read_messages` / `send_message` for Kafka
+- agents pick connections by name and never see a password; a connection's description tells them what the database is for
+- **read-only** unless you add `--allow-writes`, and connections that are read-only or tagged prod stay read-only even then
+- the **Agent** tab in the sidebar shows every call an agent made and what it got back
 
-## Quick Demo:
+## Your data
 
-![document symbol](https://github.com/Svovoniks/sauron/blob/master/demo/demo.gif?raw=true)
-
-## Development
- - `bun install`
- - `make run` (or `bun run tauri dev`) starts the app
- - `bun run dev` alone opens the UI in a plain browser with a fake backend (`src/dev/tauriMock.ts`)
- - `make check` runs the type check, the unit tests and clippy
- - the Rust integration tests need a database; they are skipped unless `SAURON_TEST_PG_PORT` (Postgres, with a table
-   `t(id bigint, name text, flag bool, arr int[], j jsonb)` holding 2500 rows) or `SAURON_TEST_CH_PORT` (ClickHouse,
-   see the comment in `src-tauri/src/clickhouse.rs`) is set
- - releases: bump the version in `package.json` and `src-tauri/Cargo.toml`, then push a tag `app-v<version>`;
-   CI builds a draft release and publishes it once every platform has uploaded its assets
-
-## Disclaimer
- - This app is mostly ai generated so there is some weird stuff happening
+Connections, saved queries, history and settings are JSON files in the app data folder (macOS:
+`~/Library/Application Support/com.svovoniks.sauron/`). Passwords are kept apart from them: in the Windows Credential Manager, the
+Secret Service on Linux, and an encrypted file on macOS. Export can include passwords only in plain text, and asks first.
 
 ## Known issues
- - **psql commands are not sandboxed (accepted risk):** `\! cmd`, `\i file`, `\o |cmd`, `\copy ... program` run on your machine with your
-   permissions. Do not execute backslash commands from saved queries or export files you did not write or read. The connection's
-   read-only / timeout settings still apply to SQL sent through psql, but a psql script can switch them off
- - the sql query editor is a piece of vs code, so some vs code shortcuts still work (the command palette and "go to line" are removed)
- - a script stops at its first failing statement, later ones are not run. Inside `BEGIN ... COMMIT` rows are read without a cursor, so a huge select there is held in memory before the row limit applies
- - there is no light theme and no built-in demo database yet
- - "Read-only" uses the database's own read-only mode (`default_transaction_read_only` / `readonly=2`), which a script can
-   switch off again; for real protection connect with a database role that only has SELECT rights
- - releases are signed ad hoc and not notarized, so macOS asks you to confirm the first start (see above); Windows may show a SmartScreen warning
+
+- **psql commands are not sandboxed:** `\! cmd`, `\i file` and `\copy ... program` run on your machine. Do not run backslash commands
+  from saved queries or exports you did not write
+- "read-only" uses the database's own read-only mode, which a script can switch off; for real protection use a role that can only SELECT
+- a script stops at its first failing statement
+
+## Development
+
+```sh
+bun install
+make run      # the app (bun run tauri dev)
+make check    # type check, unit tests, clippy
+bun run dev   # the UI in a browser with a fake backend; add ?demo to the URL for realistic data
+```
+
+- the Rust integration tests are skipped unless `SAURON_TEST_PG_PORT` (Postgres with a table
+  `t(id bigint, name text, flag bool, arr int[], j jsonb)` holding 2500 rows) or `SAURON_TEST_CH_PORT` (ClickHouse, see
+  `src-tauri/src/clickhouse.rs`) is set
+- `demo/record/record.sh` re-records the GIFs above (needs `brew install ffmpeg gifski`); the steps are in `demo/record/scenes.ts`
+- **releases:** bump the version in `package.json` and `src-tauri/Cargo.toml`, then push a tag `app-v<version>`. CI publishes the
+  release once every platform has uploaded. It needs these GitHub Actions secrets:
+  - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` sign the updates. The public key is in
+    `src-tauri/tauri.conf.json`; make a new pair with `bunx tauri signer generate -w ~/.tauri/sauron-updater.key`
+  - `MACOS_CODESIGN_P12` and `MACOS_CODESIGN_P12_PASSWORD` hold the self-signed macOS certificate. Keep the same certificate forever:
+    a new one makes macOS treat the app as a different one

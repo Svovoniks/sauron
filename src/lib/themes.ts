@@ -1,11 +1,10 @@
 /**
  * Color themes. A theme is a palette per appearance (dark / light) turned into CSS custom properties that the
- * stylesheets use everywhere (see styles/base.css for the token list). `midnight` is the original glassy look
- * (gradients, big radii, glow); every other theme is "flat": solid surfaces, hairline borders, small radii, no glow.
+ * stylesheets use everywhere (see styles/base.css for the token list). Every theme is flat: solid surfaces,
+ * hairline borders, small radii, no glow.
  */
 export type Appearance = "dark" | "light";
 export type AppearanceSetting = Appearance | "system";
-export type ThemeStyle = "glass" | "flat";
 
 export interface Palette {
   bg: string;
@@ -39,7 +38,6 @@ export interface ThemeDef {
   id: string;
   name: string;
   blurb: string;
-  style: ThemeStyle;
   /** Radius scale, applied to every rounded corner except panels (see --rs). */
   radius: number;
   panelRadius: number;
@@ -66,26 +64,9 @@ const green = (
 
 export const THEMES: ThemeDef[] = [
   {
-    id: "midnight",
-    name: "Midnight",
-    blurb: "The original: navy gradients, floating rounded panels, soft glow.",
-    style: "glass",
-    radius: 1,
-    panelRadius: 16,
-    palettes: {
-      dark: {
-        bg: "#0f0f23", panel: "#1a1a2e", panel2: "#16213e", line: "#2b3552", text: "#e2e8f0", dim: "#94a3b8", faint: "#64748b",
-        accent: "#3b82f6", ink: "#ffffff", code: "#0f0f23", btn: "#334155", btnBorder: "#475569",
-        ok: "#4ade80", warn: "#fbbf24", err: "#f87171",
-        k: "#569cd6", s: "#ce9178", n: "#b5cea8", c: "#6a9955", fn: "#dcdcaa", hl: "#7c3d12",
-      },
-    },
-  },
-  {
     id: "graphite",
     name: "Graphite",
     blurb: "Warm neutral grays with one amber accent. Flat, hairline borders.",
-    style: "flat",
     radius: 0.8,
     panelRadius: 14,
     palettes: {
@@ -107,7 +88,6 @@ export const THEMES: ThemeDef[] = [
     id: "slate",
     name: "Slate",
     blurb: "Cool, low-saturation grays with a muted teal. Calm and clinical.",
-    style: "flat",
     radius: 0.8,
     panelRadius: 14,
     palettes: {
@@ -129,7 +109,6 @@ export const THEMES: ThemeDef[] = [
     id: "paper",
     name: "Paper",
     blurb: "Ink on warm white, no hue in the chrome. Color only for status and data.",
-    style: "flat",
     radius: 0.6,
     panelRadius: 10,
     palettes: {
@@ -151,7 +130,6 @@ export const THEMES: ThemeDef[] = [
     id: "forest",
     name: "Forest",
     blurb: "Deep green on a green-tinted near-black. Classic, a bit terminal-like.",
-    style: "flat",
     radius: 0.8,
     panelRadius: 14,
     palettes: {
@@ -163,7 +141,6 @@ export const THEMES: ThemeDef[] = [
     id: "emerald",
     name: "Emerald",
     blurb: "Bluer, more saturated jade. Brighter, still calm.",
-    style: "flat",
     radius: 0.8,
     panelRadius: 14,
     palettes: {
@@ -175,7 +152,6 @@ export const THEMES: ThemeDef[] = [
     id: "moss",
     name: "Moss",
     blurb: "Yellow-leaning olive. Earthy and warm, the least “tech” of the greens.",
-    style: "flat",
     radius: 0.8,
     panelRadius: 14,
     palettes: {
@@ -187,7 +163,6 @@ export const THEMES: ThemeDef[] = [
     id: "mint",
     name: "Mint",
     blurb: "Neutral charcoal with a light mint accent. The lightest, most modern green.",
-    style: "flat",
     radius: 0.8,
     panelRadius: 14,
     palettes: {
@@ -199,7 +174,6 @@ export const THEMES: ThemeDef[] = [
     id: "sage",
     name: "Sage",
     blurb: "Desaturated gray-green. Green is a hint, not a color.",
-    style: "flat",
     radius: 0.8,
     panelRadius: 14,
     palettes: {
@@ -210,7 +184,7 @@ export const THEMES: ThemeDef[] = [
 ];
 
 export type ThemeId = string;
-export const DEFAULT_THEME: ThemeId = "midnight";
+export const DEFAULT_THEME: ThemeId = "graphite";
 export const THEME_IDS = THEMES.map((t) => t.id);
 
 export const themeById = (id: string): ThemeDef => THEMES.find((t) => t.id === id) ?? THEMES[0];
@@ -224,7 +198,7 @@ export function effectiveAppearance(theme: ThemeDef, wanted: Appearance): Appear
 export const hasAppearance = (theme: ThemeDef, mode: Appearance) => Boolean(theme.palettes[mode]);
 
 /**
- * Flat themes have no outlines to separate neighbouring surfaces, so the layers are pushed apart in lightness:
+ * Themes have no outlines to separate neighbouring surfaces, so the layers are pushed apart in lightness:
  * window < panels < raised things (buttons, menus), with inputs and the editor sunk below the panel.
  */
 function layered(p: Palette, appearance: Appearance): Palette {
@@ -250,7 +224,7 @@ function layered(p: Palette, appearance: Appearance): Palette {
 export function paletteOf(theme: ThemeDef, wanted: Appearance): { palette: Palette; appearance: Appearance } {
   const appearance = effectiveAppearance(theme, wanted);
   const raw = (theme.palettes[appearance] ?? theme.palettes.dark ?? theme.palettes.light)!;
-  return { palette: theme.style === "flat" ? layered(raw, appearance) : raw, appearance };
+  return { palette: layered(raw, appearance), appearance };
 }
 
 // --- color helpers ------------------------------------------------------------------------------
@@ -282,14 +256,13 @@ const soft = (color: string, pct: number) => mix(color, "transparent", pct);
 // --- CSS variables ------------------------------------------------------------------------------
 
 /** Accent-derived variables. `override` is a user-picked color; null uses the theme's own accent. */
-function accentVars(theme: ThemeDef, palette: Palette, appearance: Appearance, override: string | null): Record<string, string> {
+function accentVars(palette: Palette, appearance: Appearance, override: string | null): Record<string, string> {
   const hex = override ?? palette.accent;
   const base = hexToRgb(hex);
   const strong = mixToward(base, 0, 0.35);
-  // Accent used as text color: lifted on dark backgrounds, deepened on light ones.
-  const text = override || theme.style === "glass" ? toHex(mixToward(base, appearance === "dark" ? 255 : 0, appearance === "dark" ? 0.3 : 0.15)) : hex;
+  // A picked accent used as text color: lifted on dark backgrounds, deepened on light ones. A theme's own accent is already readable.
+  const text = override ? toHex(mixToward(base, appearance === "dark" ? 255 : 0, appearance === "dark" ? 0.3 : 0.15)) : hex;
   const ink = override ? inkFor(hex) : palette.ink;
-  const glass = theme.style === "glass";
   return {
     "--accent": hex,
     "--accent-strong": toHex(strong),
@@ -297,89 +270,10 @@ function accentVars(theme: ThemeDef, palette: Palette, appearance: Appearance, o
     "--accent-rgb": base.join(", "),
     "--accent-strong-rgb": strong.join(", "),
     "--accent-ink": ink,
-    "--accent-fill": glass ? "linear-gradient(135deg, var(--accent), var(--accent-strong))" : "var(--accent)",
-    "--accent-glow": glass ? "0 4px 16px rgba(var(--accent-rgb), 0.3)" : "none",
-    "--accent-glow-hover": glass ? "0 8px 25px rgba(var(--accent-rgb), 0.4)" : "none",
   };
 }
 
-const GLASS_VARS: Record<string, string> = {
-  "--bg-app": "linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%)",
-  "--panel-bg": "linear-gradient(135deg, rgba(26, 26, 46, 0.9), rgba(22, 33, 62, 0.9))",
-  "--popover-bg": "linear-gradient(135deg, rgba(26, 26, 46, 0.95), rgba(22, 33, 62, 0.95))",
-  "--modal-bg": "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
-  "--menu-bg": "rgba(15, 23, 42, 0.96)",
-  "--field-bg": "rgba(15, 15, 35, 0.8)",
-  "--field-bg-solid": "rgba(15, 15, 35, 1)",
-  "--editor-bg": "rgba(15, 15, 35, 0.9)",
-  "--sunk-bg": "rgba(15, 23, 42, 0.6)",
-  "--fill-soft": "rgba(51, 65, 85, 0.3)",
-  "--fill": "rgba(51, 65, 85, 0.6)",
-  "--fill-hover": "rgba(71, 85, 105, 0.8)",
-  "--btn-bg": "linear-gradient(135deg, rgba(51, 65, 85, 0.8), rgba(71, 85, 105, 0.8))",
-  "--line": "rgba(148, 163, 184, 0.2)",
-  "--line-strong": "rgba(148, 163, 184, 0.3)",
-  "--line-faint": "rgba(148, 163, 184, 0.1)",
-  "--edge-w": "1px",
-  "--edge-mix": "40",
-  "--panel-line": "rgba(148, 163, 184, 0.2)",
-  "--edge": "rgba(148, 163, 184, 0.3)",
-  "--divider": "rgba(148, 163, 184, 0.2)",
-  "--hover": "rgba(148, 163, 184, 0.12)",
-  "--hover-strong": "rgba(148, 163, 184, 0.2)",
-  "--text-strong": "#f1f5f9",
-  "--text": "#e2e8f0",
-  "--dim": "#94a3b8",
-  "--faint": "#64748b",
-  "--ok": "#4ade80",
-  "--warn": "#fbbf24",
-  "--err": "#f87171",
-  "--err-text": "#fca5a5",
-  "--info": "#67e8f9",
-  "--violet": "#c084fc",
-  "--sel-bg": "linear-gradient(135deg, rgba(6, 182, 212, 0.3), rgba(8, 145, 178, 0.3))",
-  "--sel-bar": "#06b6d4",
-  "--sel-fg": "#67e8f9",
-  "--hit-bg": "rgba(249, 115, 22, 0.35)",
-  "--hit-fg": "#fed7aa",
-  "--j-key": "#67e8f9",
-  "--j-str": "#9ccc65",
-  "--j-num": "#f78c6c",
-  "--j-bool": "#fbbf24",
-  "--j-null": "#64748b",
-  "--save-fill": "linear-gradient(135deg, #10b981, #059669)",
-  "--save-glow": "0 4px 16px rgba(16, 185, 129, 0.3)",
-  "--save-glow-hover": "0 8px 25px rgba(16, 185, 129, 0.4)",
-  "--save-fill-hover": "linear-gradient(135deg, #10b981, #059669)",
-  "--save-ink": "#ffffff",
-  "--save-border": "transparent",
-  "--float-bg": "linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.94)), rgba(2, 6, 23, 0.9)",
-  "--float-border": "rgba(56, 189, 248, 0.22)",
-  "--float-glow": "0 0 19px 10px #10b981",
-  "--halo": "block",
-  "--icon-bg": "linear-gradient(135deg, rgba(8, 145, 178, 0.22), rgba(14, 116, 144, 0.08))",
-  "--tray-bg": "#232a47",
-  "--ring-gap": "#16213e",
-  "--glow": "1",
-  "--danger-fill": "linear-gradient(135deg, #ef4444, #b91c1c)",
-  "--danger-glow": "0 4px 16px rgba(239, 68, 68, 0.3)",
-  "--shadow-pop": "0 8px 24px rgba(0, 0, 0, 0.4)",
-  "--shadow-modal": "0 20px 60px rgba(0, 0, 0, 0.5)",
-  "--rs": "1",
-  "--r-panel": "16px",
-  "--lift": "-2px",
-  "--caps": "uppercase",
-  "--track": "1",
-  "--font-ui": '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  "--layout-gap": "10px",
-  "--app-inline-padding": "10px",
-  "--app-bottom-padding": "10px",
-  "--handle-bg": "#64748b",
-  "--handle-border": "rgba(148, 163, 184, 0.75)",
-  "--handle-hover": "#94a3b8",
-};
-
-function flatVars(theme: ThemeDef, p: Palette, appearance: Appearance): Record<string, string> {
+function surfaceVars(theme: ThemeDef, p: Palette, appearance: Appearance): Record<string, string> {
   const dark = appearance === "dark";
   return {
     "--bg-app": p.bg,
@@ -428,29 +322,20 @@ function flatVars(theme: ThemeDef, p: Palette, appearance: Appearance): Record<s
     "--j-bool": p.k,
     "--j-null": p.faint,
     "--save-fill": p.btn,
-    // Used inside a multi-value box-shadow, where a bare `none` would invalidate the whole declaration.
-    "--save-glow": "0 0 0 0 transparent",
-    "--save-glow-hover": "0 0 0 0 transparent",
     "--save-fill-hover": "var(--fill-hover)",
     "--save-ink": p.text,
     "--save-border": dark ? "transparent" : p.line,
     "--float-bg": p.panel2,
     "--float-border": p.btnBorder,
     "--float-glow": dark ? "0 8px 24px rgba(0, 0, 0, 0.5)" : "0 8px 24px rgba(20, 20, 10, 0.18)",
-    "--halo": "none",
     "--icon-bg": soft(p.accent, 14),
     "--tray-bg": p.panel2,
     "--ring-gap": p.panel,
-    "--glow": "0",
     "--danger-fill": p.err,
-    "--danger-glow": "none",
     "--shadow-pop": dark ? "0 6px 18px rgba(0, 0, 0, 0.45)" : "0 6px 18px rgba(20, 20, 10, 0.14)",
     "--shadow-modal": dark ? "0 16px 40px rgba(0, 0, 0, 0.55)" : "0 16px 40px rgba(20, 20, 10, 0.2)",
     "--rs": String(theme.radius),
     "--r-panel": `${theme.panelRadius}px`,
-    "--lift": "0px",
-    "--caps": "none",
-    "--track": "0",
     "--font-ui": '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
     "--layout-gap": "8px",
     "--app-inline-padding": "8px",
@@ -465,8 +350,7 @@ function flatVars(theme: ThemeDef, p: Palette, appearance: Appearance): Record<s
 export function themeVars(themeId: string, wanted: Appearance, accent: string | null): Record<string, string> {
   const theme = themeById(themeId);
   const { palette, appearance } = paletteOf(theme, wanted);
-  const base = theme.style === "glass" ? GLASS_VARS : flatVars(theme, palette, appearance);
-  return { ...base, ...accentVars(theme, palette, appearance, accent), "color-scheme": appearance };
+  return { ...surfaceVars(theme, palette, appearance), ...accentVars(palette, appearance, accent), "color-scheme": appearance };
 }
 
 // --- Monaco -------------------------------------------------------------------------------------
@@ -485,24 +369,6 @@ export function monacoTheme(themeId: string, wanted: Appearance, accent: string 
   const { palette: p, appearance } = paletteOf(theme, wanted);
   const base = appearance === "dark" ? "vs-dark" : "vs";
   const name = `sauron-${theme.id}-${appearance}`;
-  if (theme.style === "glass") {
-    // Exactly the editor look from before themes existed: VS Code "Dark+" tokens, default surface.
-    return {
-      name,
-      base,
-      rules: [
-        { token: "comment", foreground: "6a9955" },
-        { token: "keyword", foreground: "569cd6" },
-        { token: "number", foreground: "b5cea8" },
-        { token: "string", foreground: "ce9178" },
-        { token: "predefined", foreground: "dcdcaa" },
-        { token: "type", foreground: "4ec9b0" },
-        { token: "identifier", foreground: "9cdcfe" },
-        { token: "operator", foreground: "d4d4d4" },
-      ],
-      colors: {},
-    };
-  }
   const accentHex = accent ?? p.accent;
   return {
     name,

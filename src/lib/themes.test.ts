@@ -20,7 +20,7 @@ describe("themes", () => {
   });
 
   test("every theme defines the same set of variables in every appearance", () => {
-    const keys = Object.keys(themeVars("midnight", "dark", null)).sort();
+    const keys = Object.keys(themeVars(DEFAULT_THEME, "dark", null)).sort();
     for (const theme of THEMES) {
       for (const mode of MODES) {
         expect(Object.keys(themeVars(theme.id, mode, null)).sort()).toEqual(keys);
@@ -43,9 +43,11 @@ describe("themes", () => {
   });
 
   test("a theme without the requested appearance falls back to the one it has", () => {
-    expect(effectiveAppearance(themeById("midnight"), "light")).toBe("dark");
+    const paper = themeById("paper");
+    const lightOnly = { ...paper, palettes: { light: paper.palettes.light } };
+    expect(effectiveAppearance(lightOnly, "dark")).toBe("light");
+    expect(paletteOf(lightOnly, "dark").appearance).toBe("light");
     expect(effectiveAppearance(themeById("forest"), "light")).toBe("light");
-    expect(paletteOf(themeById("midnight"), "light").appearance).toBe("dark");
   });
 
   test("accent override replaces accent variables and picks a readable ink", () => {
@@ -60,15 +62,14 @@ describe("themes", () => {
     expect(strong.every((c, i) => c < hexToRgb("#2f9461")[i])).toBe(true);
   });
 
-  test("midnight keeps the original gradients; flat themes use solid surfaces", () => {
-    expect(themeVars("midnight", "dark", null)["--bg-app"]).toContain("linear-gradient");
-    expect(themeVars("midnight", "dark", null)["--accent"]).toBe("#3b82f6");
-    expect(themeVars("graphite", "dark", null)["--bg-app"]).toMatch(/^#[0-9a-f]{6}$/);
-    expect(themeVars("graphite", "dark", null)["--accent-glow"]).toBe("none");
+  test("every theme has solid surfaces, and the removed Midnight theme falls back to the default", () => {
+    for (const theme of THEMES) for (const mode of MODES) expect(themeVars(theme.id, mode, null)["--bg-app"], theme.id).toMatch(/^#[0-9a-f]{6}$/);
+    expect(THEMES.some((t) => t.id === "midnight")).toBe(false);
+    expect(themeById("midnight").id).toBe(DEFAULT_THEME);
   });
 
-  test("flat dark themes layer surfaces: window < panel < raised, inputs sunk below the panel", () => {
-    for (const theme of THEMES.filter((t) => t.style === "flat")) {
+  test("dark themes layer surfaces: window < panel < raised, inputs sunk below the panel", () => {
+    for (const theme of THEMES) {
       const { palette: p, appearance } = paletteOf(theme, "dark");
       if (appearance !== "dark") continue;
       expect(luminance(p.bg), theme.id).toBeLessThan(luminance(p.panel));

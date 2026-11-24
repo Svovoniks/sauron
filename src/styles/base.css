@@ -6,23 +6,23 @@
 
 :root {
   /* Theme tokens: lib/themes.ts sets all of them at runtime (Settings -> Theme). These are only what the
-     first paint needs; the rest of the palette (Midnight) is applied before React renders. */
-  --bg-app: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
-  --text: #e2e8f0;
-  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --rs: 1;
-  --r-panel: 16px;
-  --accent: #3b82f6;
-  --accent-strong: #1d4ed8;
-  --accent-soft: #60a5fa;
-  --accent-rgb: 59, 130, 246;
-  --accent-strong-rgb: 29, 78, 216;
+     first paint needs, taken from the default theme (Graphite, dark); the rest is applied before React renders. */
+  --bg-app: #080808;
+  --text: #e7e3da;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --rs: 0.8;
+  --r-panel: 14px;
+  --accent: #e8a33d;
+  --accent-strong: #976a28;
+  --accent-soft: #e8a33d;
+  --accent-rgb: 232, 163, 61;
+  --accent-strong-rgb: 151, 106, 40;
   --cell-pad-y: 12px;
   --editor-font-size: 15px;
   --titlebar-drag-height: 38px;
-  --layout-gap: 10px;
-  --app-inline-padding: 10px;
-  --app-bottom-padding: 10px;
+  --layout-gap: 8px;
+  --app-inline-padding: 8px;
+  --app-bottom-padding: 8px;
 }
 
 html,

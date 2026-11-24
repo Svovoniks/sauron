@@ -74,6 +74,10 @@ describe("theme settings", () => {
     expect(s.appearance).toBe(DEFAULT_SETTINGS.appearance);
     expect(normalizeSettings({ theme: "forest", appearance: "light" })).toMatchObject({ theme: "forest", appearance: "light" });
   });
+  test("a saved Midnight theme (removed) becomes the default theme and keeps the appearance", () => {
+    expect(DEFAULT_SETTINGS.theme).toBe("graphite");
+    expect(normalizeSettings({ theme: "midnight", appearance: "dark", accent: "Auto" })).toMatchObject({ theme: "graphite", appearance: "dark", accent: "Auto" });
+  });
   test("an old settings file's default Blue does not override a theme accent", () => {
     expect(normalizeSettings({ accent: "Blue" }).accent).toBe("Auto");
     expect(normalizeSettings({ accent: "Violet" }).accent).toBe("Violet");

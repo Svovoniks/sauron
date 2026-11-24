@@ -145,8 +145,6 @@
   border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: calc(0.04em * var(--track));
-  text-transform: var(--caps);
   color: var(--env-color, var(--dim));
   background: color-mix(in srgb, var(--env-color, var(--dim)) 15%, transparent);
 }
@@ -280,8 +278,6 @@
 .context-menu-label {
   padding: 6px 10px 3px;
   font-size: 10.5px;
-  letter-spacing: calc(0.08em * var(--track));
-  text-transform: var(--caps);
   color: var(--faint);
 }
 

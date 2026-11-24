@@ -71,7 +71,7 @@ export const settingsSections = (version: string): Section[] => [
       {
         id: "appearance",
         label: "Appearance",
-        desc: "Dark or light, or follow the system. Midnight is dark only.",
+        desc: "Dark or light, or follow the system.",
         control: { type: "seg", key: "appearance", options: [{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }] },
       },
       { id: "accent", label: "Accent color", desc: "Buttons, selection and focus rings. “Theme” uses the theme’s own accent.", control: { type: "swatch" } },

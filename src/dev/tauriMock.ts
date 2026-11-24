@@ -1,5 +1,6 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { QueryResult, StatementOutcome } from "../types/app";
+import { demoQuery, kafkaQuery } from "./demoData";
 
 /**
  * Development only (see main.tsx): fake backend so the UI can be exercised in a plain browser
@@ -7,6 +8,8 @@ import type { QueryResult, StatementOutcome } from "../types/app";
  *
  * Magic SQL: "sleep" waits 10s (cancellable), "boom" fails, "ddl" returns a message,
  * "empty" returns a result with columns but no rows, anything else returns sample rows.
+ * Add ?demo to the URL for believable shop data instead of the test rows (for README recordings).
+ * Kafka form statements are answered with made-up topics and messages from demoData.ts.
  */
 
 const files = new Map<string, string>();
@@ -120,7 +123,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** A few connections and saved queries so the UI is not empty (add ?empty to the URL for the first-run screen). */
 function seed() {
   const conn = (id: string, name: string, host: string, env: string, read_only: boolean, db_type = "postgres") => ({
-    id, name, host, port: db_type === "postgres" ? "5432" : "8123", username: "dev", database: "shop_dev", db_type, ssl_mode: "require", read_only, timeout_secs: 60, env, description: "", ssl_root_cert: "", ssl_cert: "", ssl_key: "", use_default_certs: false, target_session_attrs: "any",
+    id, name, host, port: db_type === "postgres" ? "5432" : db_type === "kafka" ? "9092" : "8123", sasl_mechanism: "scram-sha-512", username: "dev", database: "shop_dev", db_type, ssl_mode: "require", read_only, timeout_secs: 60, env, description: "", ssl_root_cert: "", ssl_cert: "", ssl_key: "", use_default_certs: false, target_session_attrs: "any",
   });
   files.set(
     "connections",
@@ -132,6 +135,7 @@ function seed() {
         conn("staging", "staging", "pg.staging.internal", "staging", true),
         conn("prod", "prod-replica", "pg-replica.prod.internal", "prod", false),
         conn("events", "events", "ch.prod.internal", "prod", true, "clickhouse"),
+        conn("kafka", "kafka-staging", "kafka-1.staging.internal", "staging", false, "kafka"),
       ],
     }),
   );
@@ -276,8 +280,11 @@ export function installDevMock() {
         await sleep(800);
         return "2026-11-06 08:49 UTC";
       case "test_connection": {
-        const connection = args.connection as { host: string };
+        const connection = args.connection as { host: string; db_type?: string };
         await sleep(400);
+        if (connection.db_type === "kafka") {
+          return { ok: true, server_version: "Kafka · 5 topics", steps: [{ name: "Log in and read the cluster", ok: true, detail: "no login, 5 topics", ms: 38 }] };
+        }
         if (/^bad/.test(connection.host)) {
           return { ok: false, server_version: null, steps: [{ name: "Resolve host", ok: false, detail: "no such host (failed to lookup address)", ms: 12 }] };
         }
@@ -300,6 +307,11 @@ export function installDevMock() {
         const outcomes: StatementOutcome[] = [];
         for (const sql of statements) {
           const started = Date.now();
+          if (sql.startsWith('{"kafka"')) {
+            await sleep(350);
+            outcomes.push({ sql, elapsed_ms: Date.now() - started, result: kafkaQuery(sql), error: null });
+            continue;
+          }
           const catalog = catalogResult(sql);
           if (catalog) {
             outcomes.push({ sql, elapsed_ms: 3, result: catalog, error: null });
@@ -330,11 +342,12 @@ export function installDevMock() {
             continue;
           }
           const write = /^\s*(update|insert|delete)/i.test(sql);
-          const result = write || sql.includes("ddl")
+          const demo = params.has("demo") ? demoQuery(sql, rowLimit) : null;
+          const result = demo ?? (write || sql.includes("ddl")
             ? { columns: [], rows: [], truncated: false, message: write ? "3 rows affected" : "Statement executed" }
             : sql.includes("empty")
               ? { columns: [{ name: "a", type: "number" }, { name: "b", type: "string" }], rows: [], truncated: false, message: null }
-              : sampleResult(rowLimit);
+              : sampleResult(rowLimit));
           outcomes.push({ sql, elapsed_ms: Date.now() - started, result, error: null });
         }
         return outcomes;

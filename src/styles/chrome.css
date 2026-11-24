@@ -60,8 +60,6 @@
 .pal-group {
   padding: 9px 10px 4px;
   font-size: 10.5px;
-  letter-spacing: calc(0.08em * var(--track));
-  text-transform: var(--caps);
   color: var(--faint);
 }
 
@@ -222,7 +220,7 @@
   display: grid;
   place-items: center;
   border-radius: calc(14px * var(--rs));
-  background: var(--accent-fill);
+  background: var(--accent);
   color: var(--accent-ink);
 }
 
