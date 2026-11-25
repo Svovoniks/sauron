@@ -143,7 +143,12 @@ pub async fn open_client(conn: &ConnectionParams, password: &str) -> Result<(Cli
                 .await
                 .map_err(|e| describe_connect_error(e, &cfg, conn.target_session_attrs))?
         }
-        Err(e) => return Err(describe_connect_error(e, &cfg, conn.target_session_attrs)),
+        Err(e) => {
+            let tls_failed = tls_attempt_failed(&e);
+            let message = describe_connect_error(e, &cfg, conn.target_session_attrs);
+            // A handshake that has to sign with the client key fails once the app has been updated under this process.
+            return Err(if tls_failed && client_cert::in_use(conn) { crate::executable::explain(message) } else { message });
+        }
     };
     tokio::spawn(async move {
         let _ = connection.await;

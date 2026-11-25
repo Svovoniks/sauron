@@ -13,9 +13,12 @@
 //! send_message follows the same rule as a SQL write (--allow-writes, and never on read-only or prod connections).
 //!
 //! Every tool call is written to the agent log (`agent_log.rs`), which the app shows in its Agent tab.
+//!
+//! When the app updates itself, a running server switches to the new executable at the next message (see relaunch):
+//! on macOS the old process can no longer use client certificates (see executable.rs), and it would run old code anyway.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
@@ -25,6 +28,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::cancel::Registry;
 use crate::model::{ConnectionParams, DbType, StatementOutcome, TargetSessionAttrs};
 use crate::agent_log::{self, Entry, Table};
+use crate::executable::{self, State};
 use crate::{clickhouse, kafka, meta, postgres, secrets};
 
 /// Must match `identifier` in tauri.conf.json: Tauri's app data dir is `<OS data dir>/<identifier>`.
@@ -36,6 +40,13 @@ const MAX_ROWS: usize = 1000;
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 /// First keywords of statements that only read.
 const READ_KEYWORDS: [&str; 9] = ["select", "with", "values", "table", "show", "explain", "describe", "desc", "exists"];
+/// Set by a server that switched to the updated executable, for the new program: a Resume as JSON.
+const RESUME_VAR: &str = "SAURON_MCP_RESUME";
+/// A bigger message is handled by the old program rather than passed on in the environment.
+const MAX_RESUME_BYTES: usize = 64 * 1024;
+/// What to do when the old program could not switch and a client certificate fails (see executable::explain).
+const RESTART: &str = "Call the tool again: the server switches to the new version when no other call is running. \
+                       If the error stays, restart the sauron MCP server (in Claude Code: /mcp, then Reconnect).";
 
 /// A connection as the app saves it in `connections.json`.
 #[derive(Deserialize, Clone)]
@@ -93,26 +104,70 @@ impl Activity {
 
 /// Entry point for `sauron --mcp [--allow-writes]`.
 pub fn run(allow_writes: bool) -> Result<(), String> {
+    executable::remember(RESTART);
+    let resume = take_resume();
+    if resume.is_some() {
+        let path = executable::path().map(|path| path.display().to_string()).unwrap_or_default();
+        eprintln!("sauron --mcp: switched to the updated executable {path} (version {})", env!("CARGO_PKG_VERSION"));
+    }
     let data_dir = dirs::data_dir()
         .ok_or("Could not find the app data directory")?
         .join(APP_IDENTIFIER);
     secrets::init(data_dir.clone());
     crate::client_cert::init(data_dir.clone());
+    let (client, message) = resume.map(|r| (r.client, r.message)).unzip();
     let server = Arc::new(Server {
         data_dir,
         allow_writes,
         running: Mutex::default(),
-        client: Mutex::default(),
+        client: Mutex::new(client.unwrap_or_default()),
     });
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?
-        .block_on(serve(server));
+        .block_on(serve(server, message));
     Ok(())
 }
 
-async fn serve(server: Arc<Server>) {
+/// What a server that switched to the updated executable passes on to the new program, which then carries on
+/// with the same agent: the name it gave in initialize, and the message that arrived when the switch was made.
+#[derive(Deserialize)]
+struct Resume {
+    client: String,
+    message: Value,
+}
+
+fn take_resume() -> Option<Resume> {
+    let text = std::env::var(RESUME_VAR).ok()?;
+    // not for the commands this process starts (psql, the certificate renewal), nor for a later switch
+    std::env::remove_var(RESUME_VAR);
+    serde_json::from_str(&text)
+        .inspect_err(|e| eprintln!("sauron --mcp: ignoring {RESUME_VAR}, it is not valid: {e}"))
+        .ok()
+}
+
+/// Turns this process into the program now at the path it was started from, with the same pid, arguments and
+/// stdin / stdout, so the agent keeps talking to it without noticing. Returns only when that fails.
+#[cfg(unix)]
+fn relaunch(path: &Path, resume: &str) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    let mut args = std::env::args_os();
+    let mut command = std::process::Command::new(path);
+    if let Some(arg0) = args.next() {
+        command.arg0(arg0);
+    }
+    command.args(args).env(RESUME_VAR, resume).exec()
+}
+
+/// Windows cannot replace a running program in place (and keeps it from being overwritten).
+#[cfg(not(unix))]
+fn relaunch(_path: &Path, _resume: &str) -> std::io::Error {
+    std::io::ErrorKind::Unsupported.into()
+}
+
+/// Writes the responses to stdout, one per line; the handle finishes once every sender is dropped.
+fn spawn_writer() -> (tokio::sync::mpsc::UnboundedSender<Value>, tokio::task::JoinHandle<()>) {
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
@@ -124,20 +179,47 @@ async fn serve(server: Arc<Server>) {
             }
         }
     });
+    (out_tx, writer)
+}
 
+/// resumed: the message the previous program had just received when it switched to this one.
+async fn serve(server: Arc<Server>, mut resumed: Option<Value>) {
+    let (mut out_tx, mut writer) = spawn_writer();
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut tasks = tokio::task::JoinSet::new();
-    while let Ok(Some(line)) = lines.next_line().await {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let message: Value = match serde_json::from_str(&line) {
-            Ok(message) => message,
-            Err(e) => {
-                let _ = out_tx.send(error_response(Value::Null, -32700, &format!("Parse error: {e}")));
-                continue;
+    let mut relaunch_failed = false;
+    loop {
+        let message: Value = match resumed.take() {
+            Some(message) => message,
+            None => {
+                let Ok(Some(line)) = lines.next_line().await else { break };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match serde_json::from_str(&line) {
+                    Ok(message) => message,
+                    Err(e) => {
+                        let _ = out_tx.send(error_response(Value::Null, -32700, &format!("Parse error: {e}")));
+                        continue;
+                    }
+                }
             }
         };
+        while tasks.try_join_next().is_some() {}
+        // The switch is made only between messages, with nothing running and nothing read ahead: then every earlier
+        // request has its answer, and whatever the agent sends next is still in the pipe, for the new program.
+        if !relaunch_failed && tasks.is_empty() && lines.get_ref().buffer().is_empty() && executable::state() == State::Replaced {
+            let client = server.client.lock().unwrap().clone();
+            let resume = json!({ "client": client, "message": &message }).to_string();
+            if let Some(path) = executable::path().filter(|_| resume.len() <= MAX_RESUME_BYTES) {
+                drop(out_tx);
+                let _ = writer.await;
+                let error = relaunch(path, &resume);
+                eprintln!("sauron --mcp: could not switch to the updated executable {}: {error}", path.display());
+                relaunch_failed = true;
+                (out_tx, writer) = spawn_writer();
+            }
+        }
         let server = server.clone();
         let out_tx = out_tx.clone();
         // Requests run concurrently: a long query must not block `ping` or a cancel.

@@ -2,6 +2,7 @@ mod agent_log;
 mod cancel;
 mod clickhouse;
 mod client_cert;
+mod executable;
 mod kafka;
 mod mcp;
 mod meta;
@@ -245,6 +246,7 @@ pub fn run_mcp(allow_writes: bool) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    executable::remember("Quit Sauron and open it again.");
     tauri::Builder::default()
         .manage(Runs::default())
         .manage(updater::PendingUpdate::default())

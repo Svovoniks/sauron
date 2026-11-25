@@ -72,6 +72,7 @@ claude mcp add sauron -- /Applications/sauron.app/Contents/MacOS/sauron --mcp
 - agents pick connections by name and never see a password; a connection's description tells them what the database is for
 - **read-only** unless you add `--allow-writes`, and connections that are read-only or tagged prod stay read-only even then
 - the **Agent** tab in the sidebar shows every call an agent made and what it got back
+- when the app updates itself, a server the agent keeps running switches to the new version at its next call, without a restart
 
 ## Your data
 

@@ -222,6 +222,11 @@ impl Drop for ProcessGroup {
     }
 }
 
+/// Whether the connection presents a client certificate.
+pub fn in_use(conn: &ConnectionParams) -> bool {
+    files(conn).is_ok_and(|files| !files.cert.is_empty())
+}
+
 /// Trust the connection's root certificate and present its client certificate, when they are set.
 pub fn configure(builder: &mut TlsConnectorBuilder, conn: &ConnectionParams) -> Result<(), String> {
     let files = files(conn)?;
@@ -376,7 +381,7 @@ fn identity(cert: &[u8], key_pkcs8: &[u8]) -> Result<Identity, String> {
         .ok_or("Could not bundle the client certificate and key")?;
     #[cfg(target_os = "macos")]
     return temp_keychain::import(PASSWORD, || Identity::from_pkcs12(&bundle.to_der(), PASSWORD))?
-        .map_err(|e| format!("Could not use the client certificate and key: {e}"));
+        .map_err(|e| crate::executable::explain(format!("Could not use the client certificate and key: {e}")));
     #[cfg(windows)]
     Identity::from_pkcs12(&bundle.to_der(), PASSWORD)
         .map_err(|e| format!("Could not use the client certificate and key: {e}"))
@@ -402,14 +407,18 @@ mod temp_keychain {
 
     /// Deletes the folders of earlier runs whose process is gone. native-tls removes its keychain, a copy of the
     /// client key, only on a normal exit, so after a crash or a force quit it would stay until macOS cleans up.
+    /// The folder with this process's own pid is deleted too: nothing has been imported yet, so it is left by an
+    /// earlier program this process ran (the MCP server switching to an updated executable keeps its pid) or by an
+    /// older process with the same pid.
     pub fn remove_stale(temp: &Path) {
         let Ok(entries) = std::fs::read_dir(temp) else { return };
         for entry in entries.flatten() {
             let pid = entry.file_name().to_str().and_then(|name| name.strip_prefix(PREFIX)?.parse::<libc::pid_t>().ok());
-            let Some(pid) = pid.filter(|pid| u32::try_from(*pid).ok() != Some(std::process::id())) else { continue };
+            let Some(pid) = pid else { continue };
+            let own = u32::try_from(pid).ok() == Some(std::process::id());
             // SAFETY: signal 0 only checks whether the process exists; ESRCH means it does not.
-            let gone = unsafe { libc::kill(pid, 0) } == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-            if gone {
+            let gone = || unsafe { libc::kill(pid, 0) } == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            if own || gone() {
                 let _ = std::fs::remove_dir_all(entry.path());
             }
         }
@@ -827,7 +836,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn folders_of_gone_processes_are_removed() {
+    fn folders_of_gone_processes_and_of_this_pid_are_removed() {
         let temp = std::env::temp_dir().join(format!("sauron-stale-test-{}", uuid::Uuid::new_v4()));
         let mut exited = std::process::Command::new("true").spawn().unwrap();
         exited.wait().unwrap();
@@ -844,7 +853,7 @@ mod tests {
         let _ = running.wait();
         let kept = [&gone, &alive, &own, &other].map(|dir| dir.exists());
         let _ = std::fs::remove_dir_all(&temp);
-        assert_eq!(kept, [false, true, true, true]);
+        assert_eq!(kept, [false, true, false, true]);
     }
 
     #[cfg(target_os = "macos")]
