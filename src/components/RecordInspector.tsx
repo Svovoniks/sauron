@@ -3,7 +3,7 @@ import { parsePgArray } from "../lib/pgArray";
 import { embeddedJson, parseTimestamp, rowToInsert, rowToObject, typedValue } from "../lib/record";
 import { relativeTime } from "../lib/sql/analyze";
 import type { Cell, ColumnMeta, DbType } from "../types/app";
-import { cellText, detailValue } from "../utils/format";
+import { cellText, detailValue, indentJson } from "../utils/format";
 import { JsonView } from "./JsonTree";
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, FilterIcon, PlayIcon, SearchIcon } from "./icons";
 
@@ -164,17 +164,20 @@ export function RecordInspector(props: RecordInspectorProps) {
           visibleFields.length > 0 ? (
             visibleFields.map(({ column, index, cell }) => {
               const detail = detailValue(column.type, cell, { prettyJson: prefs.prettyJson, nullText: prefs.nullText });
+              // Text holding JSON is shown as a tree, so the copy button gives the same JSON indented.
+              const jsonInText = column.type === "string" && cell !== null && prefs.prettyJson && embeddedJson(cell) !== null;
+              const copyText = jsonInText ? indentJson(cell) : detail.copyText;
               return (
                 <div className="fld" key={index}>
                   <div className="fk">
                     {highlight(column.name, searchTerm || filter)}
-                    <small>{column.type === "string" && cell !== null && prefs.prettyJson && embeddedJson(cell) ? "json in text" : detail.label === "null" ? column.type : detail.label}</small>
+                    <small>{jsonInText ? "json in text" : detail.label === "null" ? column.type : detail.label}</small>
                   </div>
                   <div className="fv">
                     <FieldValue cell={cell} column={column} prefs={prefs} term={searchTerm || filter} />
                   </div>
                   <div className="acts">
-                    <button aria-label={`Copy ${column.name}`} onClick={() => props.onCopy(detail.copyText, column.name)} title="Copy value" type="button">
+                    <button aria-label={`Copy ${column.name}`} onClick={() => props.onCopy(copyText, column.name)} title="Copy value" type="button">
                       <CopyIcon />
                     </button>
                     {cell !== null && cell.length < 200 ? (

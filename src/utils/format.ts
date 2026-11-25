@@ -25,12 +25,53 @@ export interface DetailValue {
   copyText: string;
 }
 
-const prettyJson = (text: string): string | null => {
+/**
+ * Re-indents JSON text with two spaces. Values are copied character for character, never parsed, so numbers such as
+ * 18446744073709551615 keep every digit and string escapes stay as written. The input must already be valid JSON.
+ */
+export function indentJson(text: string): string {
+  let out = "";
+  let depth = 0;
+  const newline = () => `\n${"  ".repeat(depth)}`;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      let end = i + 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+      out += text.slice(i, end + 1);
+      i = end;
+    } else if (ch === "{" || ch === "[") {
+      let next = i + 1;
+      while (next < text.length && /\s/.test(text[next])) next++;
+      if (text[next] === (ch === "{" ? "}" : "]")) {
+        out += ch + text[next];
+        i = next;
+      } else {
+        depth++;
+        out += ch + newline();
+      }
+    } else if (ch === "}" || ch === "]") {
+      depth--;
+      out += newline() + ch;
+    } else if (ch === ",") {
+      out += ch + newline();
+    } else if (ch === ":") {
+      out += ": ";
+    } else if (!/\s/.test(ch)) {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/** Pretty JSON text, or null when the text is not valid JSON. */
+export const prettyJson = (text: string): string | null => {
   try {
-    return JSON.stringify(JSON.parse(text), null, 2);
+    JSON.parse(text);
   } catch {
     return null;
   }
+  return indentJson(text);
 };
 
 /**

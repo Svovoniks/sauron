@@ -108,7 +108,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: publish the draft release
+      - uses: actions/checkout@v4
+
+      - name: find the draft release
+        id: draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -118,4 +121,23 @@ jobs:
           # a draft cannot be looked up by tag, so find it in the list
           id=$(gh api "repos/$REPO/releases?per_page=50" --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | head -n1)
           test -n "$id" || { echo "no draft release for $TAG"; exit 1; }
-          gh api -X PATCH "repos/$REPO/releases/$id" -F draft=false -f make_latest=true --jq '.html_url'
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      # Every platform build merges itself into latest.json, and the builds run at the same time: a job that read the
+      # file before another one wrote it puts it back without that platform (v0.5.0 lost both macOS entries this way).
+      # The updater only reads latest.json, so it is rebuilt here from the signatures every build uploaded. A missing
+      # platform fails the step and the release stays a draft instead of going out without that platform's updates.
+      - name: rebuild latest.json from the uploaded signatures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        run: bash .github/scripts/update-manifest.sh
+
+      - name: publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        run: gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" -F draft=false -f make_latest=true --jq '.html_url'

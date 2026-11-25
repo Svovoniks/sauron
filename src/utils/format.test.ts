@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CELL_DISPLAY_CHARS, cellText, clipCell, detailValue } from "./format";
+import { CELL_DISPLAY_CHARS, cellText, clipCell, detailValue, indentJson } from "./format";
 
 describe("detailValue", () => {
   test("numeric looking text is never rewritten", () => {
@@ -44,5 +44,23 @@ describe("clipCell", () => {
     const long = clipCell("x".repeat(5_000_000));
     expect(long).toHaveLength(CELL_DISPLAY_CHARS + 1);
     expect(long.endsWith("…")).toBe(true);
+  });
+});
+
+describe("indentJson", () => {
+  test("matches JSON.stringify indentation", () => {
+    for (const text of ['{"a":1,"b":[1,2,{"c":null}],"d":{},"e":[]}', "[]", '{ "x" : [ ] , "y" : { } }', '"s"', "42"]) {
+      expect(indentJson(text)).toBe(JSON.stringify(JSON.parse(text), null, 2));
+    }
+  });
+
+  test("keeps numbers and strings exactly as written", () => {
+    expect(indentJson('{"id":18446744073709551615,"s":"a, b: {c} \\"q\\" \\\\","u":"\\u00e9"}')).toBe(
+      '{\n  "id": 18446744073709551615,\n  "s": "a, b: {c} \\"q\\" \\\\",\n  "u": "\\u00e9"\n}',
+    );
+  });
+
+  test("json columns copy the same lossless text", () => {
+    expect(detailValue("json", '{"n":9007199254740993}').copyText).toBe('{\n  "n": 9007199254740993\n}');
   });
 });
